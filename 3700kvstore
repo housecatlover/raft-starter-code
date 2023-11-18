@@ -41,36 +41,47 @@ class Replica:
         print("Sending message message '%s'" % (message,), flush=True)
         self.socket.sendto(json.dumps(message).encode('utf-8'), ('localhost', self.port))
 
-    def send_args(self, dst, type, MID):
-        if MID is None:
-            self.send({"src": self.id, "dst": dst, "leader": self.leader,
-                       "type": type})
-        else:
-            self.send({"src": self.id, "dst": dst, "leader": self.leader,
-                       "type": type, "MID": MID, 'term': self.currentTerm})
+    def send_args(self, dst, type, MID, term, value):
+        message = {"src": self.id, "dst": dst, "leader": self.leader,
+                       "type": type}
+        if MID is not None:
+            message['MID'] = MID
+        if term is not None:
+            message['term'] = term
+        if value is not None:
+            message['value'] = value
+        self.send(message)
 
     def fail(self, msg):
-        self.send_args(msg['src'], 'fail', msg['MID'])
+        self.send_args(msg['src'], 'fail', msg['MID'], None, None)
 
-    def ok(self, msg):
-        self.send_args(msg['src'], 'ok', msg['MID'])
+    def ok(self, msg, value):
+        self.send_args(msg['src'], 'ok', msg['MID'], None, value)
 
     def redirect(self, msg):
-        if self.leader == None:
+        if self.leader is None:
             self.fail(msg)
         if self.leader != self.id:
-            self.send_args(msg['src'], 'redirect', msg['MID'])
+            self.send_args(msg['src'], 'redirect', msg['MID'], None, None)
             return True
         return False
 
     def getRequest(self, msg):
-        #  I am the leader
-        self.log
-
-        self.ok(msg)
+        # I am the leader
+        contents = self.data.get(msg['key'])
+        value = '' if contents is None else contents[-1]
+        self.ok(msg, value)
 
     def setRequest(self, msg):
-
+        #  I am the leader
+        self.log.append((self.currentTerm, (msg['key'], msg['value'])))
+        current = self.data.get(msg['key'])
+        if current is None:
+            current = [msg['value']]
+        else:
+            current.append(msg['value'])
+        self.data[msg['key']] = current
+        self.ok(msg, None)
 
     def lastTerm(self):
         return self.log[-1].term if len(self.log) > 0 else 0
@@ -90,7 +101,7 @@ class Replica:
         if self.votedFor is None or self.votedFor == msg['src']:
             if 'lastTerm' >= self.lastTerm():
                 self.votedFor = msg['src']
-                self.send_args(msg['src'], 'vote', None)
+                self.send_args(msg['src'], 'vote', None, None, None)
                 return
 
     def run(self):
@@ -155,7 +166,7 @@ class Replica:
             if self.status == 'leader' and \
                     currentTime - self.last_heartbeat > HEARTBEAT:
                 self.last_heartbeat = currentTime
-                self.send_args(BROADCAST, 'AppendEntries', None)  # Heartbeat
+                self.send_args(BROADCAST, 'AppendEntries', None, None, None)  # Heartbeat
 
 
 if __name__ == "__main__":
