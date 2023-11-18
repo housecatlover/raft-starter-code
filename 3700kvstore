@@ -101,7 +101,7 @@ class Replica:
         print('term good enough')
         if self.votedFor is None or self.votedFor == msg['src']:
             print('votedFor good enough')
-            if 'lastTerm' >= self.lastTerm():
+            if msg['lastTerm'] >= self.lastTerm():
                 print("I'm voting")
                 self.votedFor = msg['src']
                 self.send_args(msg['src'], 'vote', None, None, None)
