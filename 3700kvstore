@@ -2,12 +2,10 @@
 
 import argparse, socket, time, json, select, struct, sys, math, os, random
 
+
 BROADCAST = "FFFF"
 TIMEOUT = .03  # TODO this is just a guess
 HEARTBEAT = TIMEOUT / 2  # how often heartbeats should be sent
-
-State = Enum('State', [FOLLOWER, CANDIDATE, LEADER])
-
 
 class Replica:
     def __init__(self, port, id, others):
@@ -20,6 +18,7 @@ class Replica:
 
         self.currentTerm = 0
         self.leader = 'FFFF'  # start as unknown
+        self.status = 'follower'
 
         self.log = []  # pair <term, command>
 
@@ -47,8 +46,8 @@ class Replica:
         if self.leader != self.id:
             self.send({"src": self.id, "dst": msg['src'], "leader": self.leader,
                        "type": "redirect", "MID": msg['MID']})
-            return true
-        return false
+            return True
+        return False
 
     def getRequest(self, msg):
         self.fail(msg)
@@ -58,20 +57,20 @@ class Replica:
 
     def run(self):
         while True:
-            select.select([self.socket], [], [])  # TODO added, blocks till recv
+            select.select([self.socket], [], [])
             data, addr = self.socket.recvfrom(65535)
             msg = json.loads(data.decode('utf-8'))  # todo loaded immediately
             print("Received message '%s'" % (msg,), flush=True)
 
             # TODO added from here
             if msg['type'] == 'get':
-                if redirect(msg):
+                if self.redirect(msg):
                     continue
-                getRequest(msg)  # will have a MID and a key to be gotten
+                self.getRequest(msg)  # will have a MID and a key to be gotten
             elif msg['type'] == 'set':
-                if redirect(msg):
+                if self.redirect(msg):
                     continue
-                setRequest(msg)
+                self.setRequest(msg)
             #  elif msg['type'] == 'something from another replica'
 
 
