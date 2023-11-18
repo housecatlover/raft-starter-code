@@ -32,6 +32,7 @@ class Replica:
 
     # if dst is set to "FFFF", the message will be delivered to all replicas (use multicast sparingly, since it is expensive)
     def send(self, message):
+        print("Sending message message '%s'" % (message,), flush=True)
         self.socket.sendto(json.dumps(message).encode('utf-8'), ('localhost', self.port))
 
     def fail(self, msg):
