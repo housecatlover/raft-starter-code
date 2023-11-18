@@ -2,10 +2,11 @@
 
 import argparse, socket, time, json, select, struct, sys, math, os, random
 
-
 BROADCAST = "FFFF"
 TIMEOUT = .03  # TODO this is just a guess
 HEARTBEAT = TIMEOUT / 2  # how often heartbeats should be sent
+ELECTION_TIMEOUT = .5  # TODO this is just a guess
+
 
 class Replica:
     def __init__(self, port, id, others):
@@ -13,14 +14,19 @@ class Replica:
         self.id = id
         self.others = others
 
-        self.time_since_heartbeat = 0  # for the follower's this can be time since having heard
+        self.last_heartbeat = 0  # for the follower's this can be time since having heard
         self.timeout = TIMEOUT * random.randrange(1, 2)  # recalc on each timeout
 
         self.currentTerm = 0
         self.leader = 'FFFF'  # start as unknown
         self.status = 'follower'
 
+        self.votedFor = None
+        self.num_votes = 0
+        self.election_start_time = 0.0
+
         self.log = []  # pair <term, command>
+        self.data = {}
 
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.bind(('localhost', 0))
@@ -35,47 +41,121 @@ class Replica:
         print("Sending message message '%s'" % (message,), flush=True)
         self.socket.sendto(json.dumps(message).encode('utf-8'), ('localhost', self.port))
 
+    def send_args(self, dst, type, MID):
+        if MID is None:
+            self.send({"src": self.id, "dst": dst, "leader": self.leader,
+                       "type": type})
+        else:
+            self.send({"src": self.id, "dst": dst, "leader": self.leader,
+                       "type": type, "MID": MID, 'term': self.currentTerm})
+
     def fail(self, msg):
-        self.send({"src": self.id, "dst": msg['src'], "leader": self.leader,
-                   "type": "fail", "MID": msg['MID']})
-    
+        self.send_args(msg['src'], 'fail', msg['MID'])
+
     def ok(self, msg):
-        self.send({"src": self.id, "dst": msg['src'], "leader": self.leader,
-                   "type": "ok", "MID": msg['MID']})
+        self.send_args(msg['src'], 'ok', msg['MID'])
 
     def redirect(self, msg):
+        if self.leader == None:
+            self.fail(msg)
         if self.leader != self.id:
-            self.send({"src": self.id, "dst": msg['src'], "leader": self.leader,
-                       "type": "redirect", "MID": msg['MID']})
+            self.send_args(msg['src'], 'redirect', msg['MID'])
             return True
         return False
 
     def getRequest(self, msg):
-        self.fail(msg)
+        #  I am the leader
+        self.log
+
+        self.ok(msg)
 
     def setRequest(self, msg):
-        self.fail(msg)
+
+
+    def lastTerm(self):
+        return self.log[-1].term if len(self.log) > 0 else 0
+
+    def elect(self):
+        self.election_start_time = time.time()
+        self.currentTerm += 1
+        self.status = 'candidate'
+        self.votedFor = self.id
+        self.num_votes = 0
+        self.send({"src": self.id, "dst": BROADCAST, "leader": self.leader, "type": 'candidacy',
+                   'lastTerm': self.lastTerm(), 'lastIndex': len(self.log), 'term': self.currentTerm})
+
+    def vote(self, msg):
+        if msg['term'] < self.currentTerm:
+            return  # False
+        if self.votedFor is None or self.votedFor == msg['src']:
+            if 'lastTerm' >= self.lastTerm():
+                self.votedFor = msg['src']
+                self.send_args(msg['src'], 'vote', None)
+                return
 
     def run(self):
         while True:
-            select.select([self.socket], [], [])
-            data, addr = self.socket.recvfrom(65535)
-            msg = json.loads(data.decode('utf-8'))
-            print("Received message '%s'" % (msg,), flush=True)
+            ready = select.select([self.socket], [], [], .01)
+            if len(ready) == 1:
+                data, addr = self.socket.recvfrom(65535)
+                msg = json.loads(data.decode('utf-8'))
+                print("Received message '%s'" % (msg,), flush=True)
 
-            if msg['dst'] != self.id:
-                print('Sent to the wrong host', flush=True)
+                term = msg.get('currentTerm')
+                if term is not None and term > self.currentTerm:
+                    self.currentTerm = term
+                    self.votedFor = None
+                    self.status = 'follower'
+
+                if msg['dst'] != self.id:
+                    print('Sent to the wrong host', flush=True)
+                    continue
+
+                if msg['type'] == 'get':
+                    if self.redirect(msg):
+                        continue
+                    self.getRequest(msg)  # will have a MID and a key to be gotten
+                elif msg['type'] == 'set':
+                    if self.redirect(msg):
+                        continue
+                    self.setRequest(msg)
+
+                if self.status == 'candidate':
+                    if msg['type'] == 'vote':
+                        self.num_votes += 1
+                        if self.num_votes >= len(self.others) / 2:
+                            self.status = 'leader'
+                            self.leader = self.id
+                            # other leader things
+                    elif msg['type'] == 'AppendEntries':
+                        if msg['leader'] != self.leader:
+                            self.status = 'follower'
+                            self.leader = msg['leader']
+
+                if self.status == 'follower':
+                    if msg['type'] == 'candidacy':
+                        self.vote(msg)
+
+
+
+
+            # back to running every tick
+            currentTime = time.time()
+            if self.status == 'candidate' and \
+                    currentTime - self.election_start_time > ELECTION_TIMEOUT:
+                self.elect()
                 continue
 
-            if msg['type'] == 'get':
-                if self.redirect(msg):
-                    continue
-                self.getRequest(msg)  # will have a MID and a key to be gotten
-            elif msg['type'] == 'set':
-                if self.redirect(msg):
-                    continue
-                self.setRequest(msg)
-            #  elif msg['type'] == 'something from another replica'
+            if self.status == 'follower' and \
+                    currentTime - self.last_heartbeat > self.timeout:
+                self.last_heartbeat = currentTime
+                self.elect()
+                continue
+
+            if self.status == 'leader' and \
+                    currentTime - self.last_heartbeat > HEARTBEAT:
+                self.last_heartbeat = currentTime
+                self.send_args(BROADCAST, 'AppendEntries', None)  # Heartbeat
 
 
 if __name__ == "__main__":
