@@ -92,7 +92,7 @@ class Replica:
         self.status = 'candidate'
         self.votedFor = self.id
         self.num_votes = 0
-        self.send({"src": self.id, "dst": BROADCAST, "leader": self.leader, "type": 'candidacy',
+        self.send({'src': self.id, 'dst': BROADCAST, 'leader': self.leader, 'type': 'candidacy',
                    'lastTerm': self.lastTerm(), 'lastIndex': len(self.log), 'term': self.currentTerm})
 
     def vote(self, msg):
@@ -110,6 +110,8 @@ class Replica:
     def run(self):
         while True:
             ready = select.select([self.socket], [], [], .01)
+            print(ready)
+            print(len(ready))
             if len(ready) == 1:
                 data, addr = self.socket.recvfrom(65535)
                 msg = json.loads(data.decode('utf-8'))
