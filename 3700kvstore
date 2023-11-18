@@ -63,6 +63,10 @@ class Replica:
             msg = json.loads(data.decode('utf-8'))
             print("Received message '%s'" % (msg,), flush=True)
 
+            if msg['dst'] != self.id:
+                print('Sent to the wrong host', flush=True)
+                continue
+
             if msg['type'] == 'get':
                 if self.redirect(msg):
                     continue
