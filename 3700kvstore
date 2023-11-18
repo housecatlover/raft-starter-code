@@ -14,7 +14,7 @@ class Replica:
         self.others = others
 
         self.time_since_heartbeat = 0  # for the follower's this can be time since having heard
-        self.timeout = random.randRange(TIMEOUT, TIMEOUT * 2)  # recalc on each timeout
+        self.timeout = TIMEOUT * random.randrange(1, 2)  # recalc on each timeout
 
         self.currentTerm = 0
         self.leader = 'FFFF'  # start as unknown
@@ -59,10 +59,9 @@ class Replica:
         while True:
             select.select([self.socket], [], [])
             data, addr = self.socket.recvfrom(65535)
-            msg = json.loads(data.decode('utf-8'))  # todo loaded immediately
+            msg = json.loads(data.decode('utf-8'))
             print("Received message '%s'" % (msg,), flush=True)
 
-            # TODO added from here
             if msg['type'] == 'get':
                 if self.redirect(msg):
                     continue
