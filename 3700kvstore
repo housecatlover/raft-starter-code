@@ -121,7 +121,7 @@ class Replica:
                     self.votedFor = None
                     self.status = 'follower'
 
-                if msg['dst'] != self.id or msg['dst'] == BROADCAST:
+                if msg['dst'] != self.id and msg['dst'] != BROADCAST:
                     print('Sent to the wrong host', flush=True)
                     continue
 
