@@ -65,13 +65,15 @@ class Replica:
         return False
 
     def getRequest(self, msg):
-        # I am the leader
         contents = self.data.get(msg['key'])
         value = '' if contents is None else contents[-1]
-        self.ok(msg, value)
+        if self.status == 'leader':
+            self.send_args(BROADCAST, 'replicate', msg['MID'], self.currentTerm, msg)
+            self.ok(msg, value)
+        else:
+            self.send_args(msg['src'], 'consensus', msg['MID'], self.currentTerm, value)
 
-    def setRequest(self, msg):
-        #  I am the leader
+    def putRequest(self, msg):
         self.log.append((self.currentTerm, (msg['key'], msg['value'])))
         current = self.data.get(msg['key'])
         if current is None:
@@ -79,7 +81,13 @@ class Replica:
         else:
             current.append(msg['value'])
         self.data[msg['key']] = current
-        self.ok(msg, None)
+        if self.status == 'leader':
+            self.ok(msg, None)
+            self.send_args(BROADCAST, 'replicate', None, self.currentTerm, msg)
+        else:
+            self.send_args(msg['src'], 'consensus', msg['MID'], self.currentTerm, None)
+
+
 
     def lastTerm(self):
         return self.log[-1].term if len(self.log) > 0 else 0
@@ -130,7 +138,7 @@ class Replica:
                 elif msg['type'] == 'put':
                     if self.redirect(msg):
                         continue
-                    self.setRequest(msg)
+                    self.putRequest(msg)
 
                 if self.status == 'candidate':
                     if msg['type'] == 'vote':
@@ -148,6 +156,11 @@ class Replica:
                     if msg['type'] == 'candidacy':
                         print('considering a vote')
                         self.vote(msg)
+                    elif msg['type'] == 'replicate':
+                        if msg['value']['type'] == 'get':
+                            self.getRequest(msg['value'])  # will have a MID and a key to be gotten
+                        else:
+                            self.putRequest(msg['value'])
 
             # back to running every tick
             currentTime = time.time()
