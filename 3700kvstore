@@ -15,7 +15,7 @@ class Replica:
         self.others = others
 
         self.last_heartbeat = 0  # for the follower's this can be time since having heard
-        self.timeout = TIMEOUT * random.randrange(1, 2)  # recalc on each timeout
+        self.timeout = TIMEOUT * (random.random() + 1)  # recalc on each timeout
 
         self.currentTerm = 0
         self.leader = 'FFFF'  # start as unknown
@@ -159,7 +159,7 @@ class Replica:
             if self.status != 'leader' and \
                     currentTime - self.last_heartbeat > self.timeout:
                 self.last_heartbeat = currentTime
-                self.timeout = TIMEOUT * random.randrange(1, 2)
+                self.timeout = TIMEOUT * (random.random() + 1)  # 1-2 x timeout
                 self.elect()
                 continue
 
