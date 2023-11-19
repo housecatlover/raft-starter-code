@@ -113,8 +113,10 @@ class Replica:
                 if term is not None and term > self.currentTerm:
                     self.currentTerm = term
                     self.votedFor = None
-                    self.last_heartbeat = time.time() #TODO added
                     self.status = 'follower'
+
+                if msg['src'] == self.leader:  # TODO added
+                    self.last_heartbeat = time.time()
 
                 if msg['dst'] != self.id and msg['dst'] != BROADCAST:
                     print('Sent to the wrong host', flush=True)
@@ -149,10 +151,12 @@ class Replica:
 
 
 
+
             # back to running every tick
             currentTime = time.time()
             if self.status != 'leader' and \
                     currentTime - self.last_heartbeat > self.timeout:
+                print(currentTime - self.last_heartbeat)
                 self.last_heartbeat = currentTime
                 self.timeout = TIMEOUT * (random.random() + 1)  # 1-2 x timeout
                 self.elect()
