@@ -3,7 +3,7 @@
 import argparse, socket, time, json, select, struct, sys, math, os, random
 
 BROADCAST = "FFFF"
-TIMEOUT = .3  # TODO this is just a guess
+TIMEOUT = 2.5  # TODO this is just a guess
 HEARTBEAT = TIMEOUT / 2  # how often heartbeats should be sent
 
 
@@ -69,7 +69,7 @@ class Replica:
         value = '' if contents is None else contents[-1]
         if self.status == 'leader':
             self.send_args(BROADCAST, 'replicate', msg['MID'], self.currentTerm, msg)
-            self.ok(msg, value)
+            self.ok(msg, value)  # postpone this until the consensus
         else:
             self.send_args(self.leader, 'consensus', msg['MID'], self.currentTerm, value)
 
@@ -82,7 +82,7 @@ class Replica:
             current.append(msg['value'])
         self.data[msg['key']] = current
         if self.status == 'leader':
-            self.ok(msg, None)
+            self.ok(msg, None)  # postpone this until the consensus
             self.send_args(BROADCAST, 'replicate', None, self.currentTerm, msg)
         else:
             self.send_args(self.leader, 'consensus', msg['MID'], self.currentTerm, None)
