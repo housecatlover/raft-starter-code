@@ -119,6 +119,7 @@ class Replica:
                 if term is not None and term > self.currentTerm:
                     self.currentTerm = term
                     self.votedFor = None
+                    self.last_heartbeat = currentTime #TODO added
                     self.status = 'follower'
 
                 if msg['dst'] != self.id and msg['dst'] != BROADCAST:
