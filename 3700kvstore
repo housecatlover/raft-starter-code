@@ -5,6 +5,7 @@ import argparse, socket, time, json, select, struct, sys, math, os, random
 BROADCAST = "FFFF"
 TIMEOUT = .03  # TODO this is just a guess
 HEARTBEAT = TIMEOUT / 2  # how often heartbeats should be sent
+ELECTION_TIMEOUT = .5  # TODO this is just a guess
 
 
 class Replica:
@@ -22,7 +23,6 @@ class Replica:
 
         self.votedFor = None
         self.num_votes = 0
-        self.election_start_time = 0.0
 
         self.log = []  # pair <term, command>
         self.data = {}
@@ -86,7 +86,6 @@ class Replica:
         return self.log[-1].term if len(self.log) > 0 else 0
 
     def elect(self):
-        self.election_start_time = time.time()
         self.currentTerm += 1
         self.status = 'candidate'
         self.votedFor = self.id
@@ -157,13 +156,7 @@ class Replica:
 
             # back to running every tick
             currentTime = time.time()
-            if self.status == 'candidate' and \
-                    currentTime - self.election_start_time > self.timeout:
-                self.timeout = TIMEOUT * random.randrange(1, 2)
-                self.elect()
-                continue
-
-            if self.status == 'follower' and \
+            if self.status != 'leader' and \
                     currentTime - self.last_heartbeat > self.timeout:
                 self.last_heartbeat = currentTime
                 self.timeout = TIMEOUT * random.randrange(1, 2)
