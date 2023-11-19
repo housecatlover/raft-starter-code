@@ -71,7 +71,7 @@ class Replica:
             self.send_args(BROADCAST, 'replicate', msg['MID'], self.currentTerm, msg)
             self.ok(msg, value)
         else:
-            self.send_args(msg['src'], 'consensus', msg['MID'], self.currentTerm, value)
+            self.send_args(self.leader, 'consensus', msg['MID'], self.currentTerm, value)
 
     def putRequest(self, msg):
         self.log.append((self.currentTerm, (msg['key'], msg['value'])))
@@ -85,7 +85,7 @@ class Replica:
             self.ok(msg, None)
             self.send_args(BROADCAST, 'replicate', None, self.currentTerm, msg)
         else:
-            self.send_args(msg['src'], 'consensus', msg['MID'], self.currentTerm, None)
+            self.send_args(self.leader, 'consensus', msg['MID'], self.currentTerm, None)
 
 
 
