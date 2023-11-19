@@ -3,10 +3,8 @@
 import argparse, socket, time, json, select, struct, sys, math, os, random
 
 BROADCAST = "FFFF"
-TIMEOUT = .03  # TODO this is just a guess
+TIMEOUT = .3  # TODO this is just a guess
 HEARTBEAT = TIMEOUT / 2  # how often heartbeats should be sent
-ELECTION_TIMEOUT = .5  # TODO this is just a guess
-
 
 class Replica:
     def __init__(self, port, id, others):
@@ -14,7 +12,7 @@ class Replica:
         self.id = id
         self.others = others
 
-        self.last_heartbeat = 0  # for the follower's this can be time since having heard
+        self.last_heartbeat = time.time()  # for the follower's this can be time since having heard
         self.timeout = TIMEOUT * (random.random() + 1)  # recalc on each timeout
 
         self.currentTerm = 0
