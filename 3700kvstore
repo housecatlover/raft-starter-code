@@ -6,6 +6,7 @@ BROADCAST = "FFFF"
 TIMEOUT = .3  # TODO this is just a guess
 HEARTBEAT = TIMEOUT / 2  # how often heartbeats should be sent
 
+
 class Replica:
     def __init__(self, port, id, others):
         self.port = port
@@ -40,7 +41,7 @@ class Replica:
 
     def send_args(self, dst, type, MID, term, value):
         message = {"src": self.id, "dst": dst, "leader": self.leader,
-                       "type": type}
+                   "type": type}
         if MID is not None:
             message['MID'] = MID
         if term is not None:
@@ -126,7 +127,7 @@ class Replica:
                     if self.redirect(msg):
                         continue
                     self.getRequest(msg)  # will have a MID and a key to be gotten
-                elif msg['type'] == 'set':
+                elif msg['type'] == 'put':
                     if self.redirect(msg):
                         continue
                     self.setRequest(msg)
@@ -147,10 +148,6 @@ class Replica:
                     if msg['type'] == 'candidacy':
                         print('considering a vote')
                         self.vote(msg)
-
-
-
-
 
             # back to running every tick
             currentTime = time.time()
