@@ -90,7 +90,7 @@ class Replica:
 
 
     def lastTerm(self):
-        return self.log[-1].term if len(self.log) > 0 else 0
+        return self.log[-1][0] if len(self.log) > 0 else 0
 
     def elect(self):
         self.currentTerm += 1
