@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import argparse, socket, time, json, select, struct, sys, math, os, random
+import argparse, socket, time, json, select, struct, sys, math, os, random, secrets
 
 BROADCAST = "FFFF"
 TIMEOUT = 2.5  # TODO this is just a guess
@@ -22,6 +22,7 @@ class Replica:
 
         self.votedFor = None
         self.num_votes = 0
+        self.electMID = None
 
         self.log = []  # pair <term, command>
         self.data = {}
@@ -69,7 +70,7 @@ class Replica:
         value = '' if contents is None else contents[-1]
         if self.status == 'leader':
             self.send_args(BROADCAST, 'replicate', msg['MID'], self.currentTerm, msg)
-            self.ok(msg, value)  # postpone this until the consensus
+            self.ok(msg, value)  # TODO postpone this until the consensus
         else:
             self.send_args(self.leader, 'consensus', msg['MID'], self.currentTerm, value)
 
@@ -82,7 +83,7 @@ class Replica:
             current.append(msg['value'])
         self.data[msg['key']] = current
         if self.status == 'leader':
-            self.ok(msg, None)  # postpone this until the consensus
+            self.ok(msg, None)  # TODO postpone this until the consensus
             self.send_args(BROADCAST, 'replicate', None, self.currentTerm, msg)
         else:
             self.send_args(self.leader, 'consensus', msg['MID'], self.currentTerm, None)
@@ -97,8 +98,10 @@ class Replica:
         self.status = 'candidate'
         self.votedFor = self.id
         self.num_votes = 0
+        self.electMID = secrets.token_hex(16)
         self.send({'src': self.id, 'dst': BROADCAST, 'leader': self.leader, 'type': 'candidacy',
-                   'lastTerm': self.lastTerm(), 'lastIndex': len(self.log), 'term': self.currentTerm})
+                   'lastTerm': self.lastTerm(), 'lastIndex': len(self.log), 'term': self.currentTerm,
+                   'MID': self.electMID})
 
     def vote(self, msg):
         if msg['term'] < self.currentTerm:
@@ -106,8 +109,8 @@ class Replica:
         if self.votedFor is None or self.votedFor == msg['src']:
             if msg['lastTerm'] >= self.lastTerm():
                 self.votedFor = msg['src']
-                self.send_args(msg['src'], 'vote', None, None, None)
-                self.last_heartbeat = time.time()  # TODO added
+                self.send_args(msg['src'], 'vote', msg['MID'], None, None)
+                self.last_heartbeat = time.time()
                 return
 
     def run(self):
@@ -141,7 +144,7 @@ class Replica:
                     self.putRequest(msg)
 
                 if self.status == 'candidate':
-                    if msg['type'] == 'vote':
+                    if msg['type'] == 'vote' and msg['MID'] == self.electMID:
                         self.num_votes += 1
                         if self.num_votes >= len(self.others) / 2:
                             self.status = 'leader'
