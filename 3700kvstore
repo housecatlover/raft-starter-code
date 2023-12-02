@@ -6,6 +6,8 @@ BROADCAST = "FFFF"
 TIMEOUT = 2.5
 HEARTBEAT = TIMEOUT / 2  # how often heartbeats should be sent
 
+TERM = 0
+COMMAND = 1
 
 class Replica:
     def __init__(self, port, id, others):
@@ -16,15 +18,16 @@ class Replica:
         self.last_heartbeat = time.time()  # for the follower's this can be time since having heard
         self.timeout = TIMEOUT * (random.random() + 1)  # recalculate on each timeout
 
-        self.current_term = 0
+        self.currentTerm = 0
         self.leader = 'FFFF'  # start as unknown
         self.status = 'follower'
 
         self.votedFor = None
         self.num_votes = 0
 
-        self.log = []  # pair <term, command>
+        self.log = []  # pair <term, command> as defined in the constants
         self.data = {}
+        self.lastApplied = 0
         self.pending = {}  # 'MID' : (msg, numVotes)
         self.events = []  # time : 'MID' the first will always expire first
 
@@ -36,8 +39,9 @@ class Replica:
         self.send(hello)
         print("Sent hello message: %s" % hello, flush=True)
 
-    # if dst is set to "FFFF", the message will be delivered to all replicas (use multicast sparingly, since it is expensive)
     def send(self, message):
+        if message['type'] == 'AppendEntries' and message['dst'] == BROADCAST:
+            self.last_heartbeat = time.time()
         print("Sending message message '%s'" % (message,), flush=True)
         self.socket.sendto(json.dumps(message).encode('utf-8'), ('localhost', self.port))
 
@@ -52,9 +56,9 @@ class Replica:
             message['value'] = value
         self.send(message)
 
-    def send_append(self, prevLogIndex, prevLogTerm, entries):
-        self.send({"src": self.id, "dst": BROADCAST, "leader": self.leader,
-                   "type": 'appendEntries', 'term': self.current_term,
+    def send_append(self, dst, MID, prevLogIndex, prevLogTerm, entries):
+        self.send({"src": self.id, "dst": BROADCAST if dst is None else dst, "leader": self.leader,
+                   "type": 'AppendEntries', 'MID': MID, 'term': self.currentTerm,
                    'prevLogIndex': prevLogIndex, 'prevLogTerm': prevLogTerm,
                    'entries': entries, 'leaderCommit': None})  # TODO figure out what commit means
 
@@ -76,25 +80,16 @@ class Replica:
         contents = self.data.get(msg['key'])
         value = '' if contents is None else contents[-1]
         if self.status == 'leader':
-            self.pending[msg['MID']] = {'msg': msg, 'vote_count': 0, 'value': value}
-            self.send_args(BROADCAST, 'consider', msg['MID'], self.current_term, msg)
-        else:
-            self.send_args(self.leader, 'agree', msg['MID'], self.current_term, value)
+            self.ok(msg, value)
 
     def put_request(self, msg):
         if self.status == 'leader':
+            entry = (self.currentTerm, (msg['key'], msg['value']))
+            self.send_append(None, msg['MID'], self.commitIndex(), self.lastTerm(), [entry])
+            self.log.append(entry)
             self.pending[msg['MID']] = {'msg': msg, 'vote_count': 0}
-            self.send_args(BROADCAST, 'consider', None, self.current_term, msg)
-        else:
-            self.send_args(self.leader, 'agree', msg['MID'], self.current_term, None)
-
-    def apply_get(self, msg, value):
-        self.ok(msg, value)
 
     def apply_put(self, msg):
-        entry = (self.current_term, (msg['key'], msg['value']))
-        self.send_append(self.lastIndex(), self.lastTerm(), [entry])  # last as previous
-        self.log.append(entry)
         current = self.data.get(msg['key'])
         if current is None:
             current = [msg['value']]
@@ -103,22 +98,22 @@ class Replica:
         self.data[msg['key']] = current
         self.ok(msg, None)
 
-    def lastIndex(self):
+    def commitIndex(self):
         return len(self.log) - 1
 
     def lastTerm(self):
-        return self.log[-1][0] if len(self.log) > 0 else 0
+        return self.log[-1][TERM] if len(self.log) > 0 else 0
 
     def elect(self):
-        self.current_term += 1
+        self.currentTerm += 1
         self.status = 'candidate'
         self.votedFor = self.id
         self.num_votes = 0
         self.send({'src': self.id, 'dst': BROADCAST, 'leader': self.leader, 'type': 'candidacy',
-                   'lastTerm': self.lastTerm(), 'lastIndex': len(self.log), 'term': self.current_term})
+                   'lastTerm': self.lastTerm(), 'lastIndex': len(self.log), 'term': self.currentTerm})
 
     def vote(self, msg):
-        if msg['term'] < self.current_term:
+        if msg['term'] < self.currentTerm:
             return  # False
         if self.votedFor is None or self.votedFor == msg['src']:
             if msg['lastTerm'] >= self.lastTerm():
@@ -134,6 +129,21 @@ class Replica:
                 self.events.pop()
                 break
 
+    def consider_append(self, msg):
+        if self.log[msg['prevLogIndex']][TERM] == msg['prevLogTerm']:
+            for i in range(len(self.log) - 1 - msg['prevLogIndex']):
+                self.log.pop(len(self.log) - 1)
+            self.log.extend(msg['entries'])
+            self.send_args(self.leader, 'agree', msg['MID'], self.currentTerm, self.commitIndex())
+        else:
+            self.send_args(self.leader, 'induce_me', msg['MID'], None, self.log)
+
+    def induce(self, msg):
+        for index in range(len(msg['value'])):
+            if msg['value'][index] != self.log[index]:
+                self.send_append(msg['src'], msg['MID'], index - 1, self.log[index - 1][TERM],
+                                 self.log[index:])
+
     def run(self):
         while True:
             ready = select.select([self.socket], [], [], .01)[0]
@@ -143,8 +153,8 @@ class Replica:
                 print("Received message '%s'" % (msg,), flush=True)
 
                 term = msg.get('currentTerm')
-                if term is not None and term > self.current_term:
-                    self.current_term = term
+                if term is not None and term > self.currentTerm:
+                    self.currentTerm = term
                     self.votedFor = None
                     self.status = 'follower'
 
@@ -166,18 +176,19 @@ class Replica:
 
                 if self.status == 'leader':
                     if msg['type'] == 'agree':
-                        target = self.pending[msg['MID']]
-                        target['vote_count'] += 1  # increment the votes on the targeted pending message
-                        if target['vote_count'] > int(len(self.others) / 2):
-                            if ['type'] == 'put':
+                        target = self.pending.get(msg['MID'])
+                        if target is not None:
+                            # TODO can also intuit votes on log entries less then self.commitIndex()
+                            # TODO found in the message's value field
+                            target['vote_count'] += 1  # increment the votes on the targeted pending message
+                            if target['vote_count'] > int(len(self.others) / 2):
                                 self.apply_put(target['msg'])
                                 self.forget(msg['MID'])
-                            else:
-                                self.apply_get(target['msg'], target['msg'])
-                                self.forget(msg['MID'])
+                    elif msg['type'] == 'induce_me':
+                        self.induce(msg)
 
                 if self.status == 'candidate':
-                    if msg['type'] == 'vote' and msg['term'] == self.current_term:
+                    if msg['type'] == 'vote' and msg['term'] == self.currentTerm:
                         self.num_votes += 1
                         if self.num_votes >= len(self.others) / 2:
                             self.status = 'leader'
@@ -190,13 +201,14 @@ class Replica:
 
                 if self.status == 'follower':
                     if msg['type'] == 'candidacy':
-                        print('considering a vote')
                         self.vote(msg)
                     elif msg['type'] == 'consider':
                         if msg['value']['type'] == 'get':
                             self.get_request(msg['value'])  # will have a MID and a key to be gotten
                         else:
                             self.put_request(msg['value'])
+                    elif msg['type'] == 'AppendEntries':
+                        self.consider_append(msg)
 
             # back to running every tick
             currentTime = time.time()
@@ -211,7 +223,7 @@ class Replica:
             if self.status == 'leader' and \
                     currentTime - self.last_heartbeat > HEARTBEAT:
                 self.last_heartbeat = currentTime
-                self.send_args(BROADCAST, 'AppendEntries', None, self.current_term, None)  # Heartbeat
+                self.send_args(BROADCAST, 'AppendEntries', None, self.currentTerm, None)  # Heartbeat
 
 
 if __name__ == "__main__":
