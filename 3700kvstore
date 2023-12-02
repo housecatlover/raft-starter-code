@@ -118,7 +118,7 @@ class Replica:
         if self.votedFor is None or self.votedFor == msg['src']:
             if msg['lastTerm'] >= self.lastTerm():
                 self.votedFor = msg['src']
-                self.send_args(msg['src'], 'vote', None, None, None)
+                self.send_args(msg['src'], 'vote', None, self.currentTerm, None)
                 self.last_heartbeat = time.time()
                 return
 
