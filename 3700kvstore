@@ -62,7 +62,7 @@ class Replica:
         self.send({"src": self.id, "dst": BROADCAST if dst is None else dst, "leader": self.leader,
                    "type": 'AppendEntries', 'MID': MID, 'term': self.currentTerm,
                    'prevLogIndex': prevLogIndex, 'prevLogTerm': prevLogTerm,
-                   'entries': entries, 'leaderCommit': None})  # TODO figure out what commit means
+                   'entries': entries, 'leaderCommit': None})  # TODO just self.lastApplied ?
 
     def fail(self, msg):
         self.send_args(msg['src'], 'fail', msg['MID'], None, None)
@@ -98,7 +98,8 @@ class Replica:
         else:
             current.append(msg['value'])
         self.data[msg['key']] = current
-        self.ok(msg, None)
+        if self.status == 'leader':
+            self.ok(msg, None)
 
     def commitIndex(self):
         return len(self.log) - 1
@@ -150,6 +151,12 @@ class Replica:
                 self.send_append(msg['src'], msg['MID'], index - 1, self.log[index - 1][TERM],
                                  self.log[index:])
 
+    def resolve_log(self):
+        for n in self.pending:
+            MID = self.pending[self.events[n][0]]
+            self.fail(self.pending[MID]['msg'])
+            self.forget(MID)
+
     def run(self):
         while True:
             ready = select.select([self.socket], [], [], .01)[0]
@@ -162,6 +169,8 @@ class Replica:
                 if term is not None and term > self.currentTerm:
                     self.currentTerm = term
                     self.votedFor = None
+                    if self.status == 'leader':
+                        self.resolve_log()
                     self.status = 'follower'
 
                 if msg['src'] == self.leader:
@@ -222,17 +231,16 @@ class Replica:
             currentTime = time.time()
             if self.status != 'leader' and \
                     currentTime - self.last_heartbeat > self.timeout:
-                print(currentTime - self.last_heartbeat)
                 self.last_heartbeat = currentTime
                 self.timeout = TIMEOUT * (random.random() + 1)  # 1-2 x timeout
                 self.elect()
                 continue
 
-            if self.status == 'leader' and \
-                    currentTime - self.last_heartbeat > HEARTBEAT:
-                self.last_heartbeat = currentTime
-                self.send_args(BROADCAST, 'AppendEntries', None, self.currentTerm, None)  # Heartbeat
-
+            if self.status == 'leader':
+                if currentTime - self.last_heartbeat > HEARTBEAT:
+                    self.last_heartbeat = currentTime
+                    self.send_args(BROADCAST, 'AppendEntries', None, self.currentTerm, None)  # Heartbeat
+                # TODO
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='run a key-value store')
