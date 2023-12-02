@@ -133,18 +133,15 @@ class Replica:
 
     def consider_append(self, msg):
         if 'prevLogTerm' not in msg:
-            print('heartbeat')
             return  # it was a heartbeat
         if msg['prevLogIndex'] == -1 \
                 or not (len(self.log) - 1 > msg['prevLogIndex']
                         or self.log[msg['prevLogIndex']][TERM] != msg['prevLogTerm']):
-            print('gonna agree')
             for i in range(len(self.log) - 1 - msg['prevLogIndex']):
                 self.log.pop(len(self.log) - 1)
             self.log.extend(msg['entries'])
             self.send_args(self.leader, 'agree', msg['MID'], self.currentTerm, self.commitIndex())
         else:
-            print('gonna induce')
             self.send_args(self.leader, 'induce_me', msg['MID'], None, self.log)
 
     def induce(self, msg):
@@ -219,7 +216,7 @@ class Replica:
                     elif msg['type'] == 'AppendEntries':
                         if msg['leader'] != self.leader and msg['term'] >= self.currentTerm:
                             self.leader = msg['leader']
-                            self.consider_append(msg)
+                        self.consider_append(msg)
 
             # back to running every tick
             currentTime = time.time()
