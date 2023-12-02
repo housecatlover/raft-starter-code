@@ -7,7 +7,7 @@ TIMEOUT = 2.5
 HEARTBEAT = TIMEOUT / 2  # how often heartbeats should be sent
 
 TERM = 0
-COMMAND = 1
+ENTRY = 1
 
 class Replica:
     def __init__(self, port, id, others):
@@ -25,7 +25,7 @@ class Replica:
         self.votedFor = None
         self.num_votes = 0
 
-        self.log = []  # pair <term, command> as defined in the constants
+        self.log = []  # pair <term, <key, value>> as defined in the constants
         self.data = {}
         self.lastApplied = 0
         self.pending = {}  # 'MID' : (msg, numVotes)
@@ -132,7 +132,8 @@ class Replica:
     def consider_append(self, msg):
         if 'prevLogTerm' not in msg:
             return  # it was a heartbeat
-        if self.log[msg['prevLogIndex']][TERM] == msg['prevLogTerm']:
+        if len(self.log) - 1 < msg['prevLogIndex'] \
+                and self.log[msg['prevLogIndex']][TERM] == msg['prevLogTerm']:
             for i in range(len(self.log) - 1 - msg['prevLogIndex']):
                 self.log.pop(len(self.log) - 1)
             self.log.extend(msg['entries'])
