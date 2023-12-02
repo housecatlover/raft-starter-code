@@ -201,7 +201,7 @@ class Replica:
                             self.leader = self.id
                             # other leader things
                     elif msg['type'] == 'AppendEntries':
-                        if msg['leader'] != self.leader:
+                        if msg['leader'] != self.leader and msg['term'] >= self.currentTerm:
                             self.status = 'follower'
                             self.leader = msg['leader']
 
@@ -214,7 +214,9 @@ class Replica:
                         else:
                             self.put_request(msg['value'])
                     elif msg['type'] == 'AppendEntries':
-                        self.consider_append(msg)
+                        if msg['leader'] != self.leader and msg['term'] >= self.currentTerm:
+                            self.leader = msg['leader']
+                            self.consider_append(msg)
 
             # back to running every tick
             currentTime = time.time()
