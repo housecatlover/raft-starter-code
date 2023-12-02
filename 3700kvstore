@@ -130,6 +130,8 @@ class Replica:
                 break
 
     def consider_append(self, msg):
+        if 'prevLogTerm' not in msg:
+            return  # it was a heartbeat
         if self.log[msg['prevLogIndex']][TERM] == msg['prevLogTerm']:
             for i in range(len(self.log) - 1 - msg['prevLogIndex']):
                 self.log.pop(len(self.log) - 1)
