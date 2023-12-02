@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse, socket, time, json, select, struct, sys, math, os, random, secrets
+
 # secrets.token_hex(16)
 BROADCAST = "FFFF"
 TIMEOUT = 2.5
@@ -8,6 +9,7 @@ HEARTBEAT = TIMEOUT / 2  # how often heartbeats should be sent
 
 TERM = 0
 ENTRY = 1
+
 
 class Replica:
     def __init__(self, port, id, others):
@@ -132,8 +134,9 @@ class Replica:
     def consider_append(self, msg):
         if 'prevLogTerm' not in msg:
             return  # it was a heartbeat
-        if len(self.log) - 1 < msg['prevLogIndex'] \
-                and self.log[msg['prevLogIndex']][TERM] == msg['prevLogTerm']:
+        if msg['prevLogIndex'] == -1 \
+                or not (len(self.log) - 1 > msg['prevLogIndex']
+                        or self.log[msg['prevLogIndex']][TERM] != msg['prevLogTerm']):
             for i in range(len(self.log) - 1 - msg['prevLogIndex']):
                 self.log.pop(len(self.log) - 1)
             self.log.extend(msg['entries'])
