@@ -152,7 +152,7 @@ class Replica:
                 msg = json.loads(data.decode('utf-8'))
                 print("Received message '%s'" % (msg,), flush=True)
 
-                term = msg.get('currentTerm')
+                term = msg.get('term')
                 if term is not None and term > self.currentTerm:
                     self.currentTerm = term
                     self.votedFor = None
