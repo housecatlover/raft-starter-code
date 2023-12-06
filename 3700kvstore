@@ -136,7 +136,7 @@ class Replica:
                 break
 
     def consider_append(self, msg):
-        if not msg['entries'].isEmpty():  # if not a heartbeat
+        if len(msg['entries']) != 0:  # if not a heartbeat
             prev_i = msg['prevLogIndex']
             if len(self.log) > prev_i + 1 and self.log[prev_i + 1:] == msg['entries']:
                 return  # already applied, probably duplicate message
