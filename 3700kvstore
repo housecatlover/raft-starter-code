@@ -96,9 +96,8 @@ class Replica:
             self.events.append((time.time(), msg['MID']))
 
     def apply_put(self, msg):
+        self.apply_log()
         self.commitIndex = self.lastApplied  # only called for the leader
-        while self.commitIndex > self.lastApplied:
-            self.apply_log()
         self.ok(msg, None)
 
     def apply_log(self):
