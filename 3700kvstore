@@ -220,15 +220,14 @@ class Replica:
 
                 if self.status == 'leader':
                     if msg['type'] == 'agree':
+
                         target = self.pending.get(msg['MID'])
-
-                        # update matchIndex
-                        current = self.matchIndex.get(msg['src'])
-                        if current is None:
-                            current = -1
-                        self.matchIndex[msg['src']] = max(target['index'], current)
-
                         if target is not None:
+                            # update matchIndex
+                            current = self.matchIndex.get(msg['src'])
+                            if current is None:
+                                current = -1
+                            self.matchIndex[msg['src']] = max(target['index'], current)
                             # intuiting votes
                             recheck = set()
                             for MID in self.pending.keys():
