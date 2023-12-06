@@ -154,11 +154,9 @@ class Replica:
             while self.commitIndex > self.lastApplied:
                 self.apply_log()
 
-
-
     def induce(self, msg):
         log_len = len(msg['value'])
-        for index in range(log_len - 1, -1, -1):
+        for index in range(min(log_len, len(self.log)) - 1, -1, -1):
             if msg['value'][index] == self.log[index]:  # if the value is the same at this index
                 if len(self.log) <= index + 1:  # then, if the leader's log is not longer
                     return  # nothing to append: exit
@@ -172,10 +170,13 @@ class Replica:
         print("forgetting: " + str(self.events))
         for n in range(len(self.pending)):
             MID = self.events[0][1]  # [(time, MID)]
-            print(MID)
-            msg = self.pending[MID]['msg']
-            self.forget(MID)
-            self.fail(msg)
+            if MID not in self.pending:
+                print("event was referring to non-existent pending")
+                self.events.remove(0)
+            else:
+                msg = self.pending[MID]['msg']
+                self.forget(MID)
+                self.fail(msg)
 
     def run(self):
         while True:
