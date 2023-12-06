@@ -31,7 +31,7 @@ class Replica:
         self.data = {}  # the key, value dict that is the store
         self.lastApplied = -1
         self.pending = {}  # 'MID' : {'msg': msg, 'numVotes': set(votes), 'index': the index it is given in the log}
-        self.events = []  # time : 'MID' the first will always expire first
+        self.events = []  # time, 'MID' the first will always expire first
 
         self.commitIndex = -1  # the last know index to be committed to the leader's log (got consensus)
         self.matchIndex = {}
@@ -141,6 +141,8 @@ class Replica:
             return
         prev_i = msg['prevLogIndex']
         if len(self.log) > prev_i + 1 and self.log[prev_i + 1:] == msg['entries']:
+            print('was skipping the application of append since it was already there')
+            self.send_args(self.leader, 'agree', msg['MID'], self.currentTerm, self.prevIndex())
             return  # already applied, probably duplicate message
         if prev_i == -1 \
                 or (len(self.log) > msg['prevLogIndex']  # if index is in the log
@@ -284,7 +286,12 @@ class Replica:
                 if currentTime - self.last_heartbeat > HEARTBEAT:
                     self.last_heartbeat = currentTime
                     self.send_append(None, '', self.prevIndex(), self.prevTerm(), [])
-                # TODO handle put timeouts
+                if self.events[0][0] - time.time() > TIMEOUT:
+                    print("put timed out")
+                    MID = self.events[0][1]
+                    msg = self.pending[MID]['msg']
+                    self.forget(MID)
+                    self.fail(msg)
 
 
 if __name__ == "__main__":
