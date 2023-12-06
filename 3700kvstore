@@ -47,8 +47,7 @@ class Replica:
     def send(self, message):
         if message['type'] == 'AppendEntries' and message['dst'] == BROADCAST:
             self.last_heartbeat = time.time()
-        if message['type'] != 'induce_me':
-            print("Sending message message '%s'" % (message,), flush=True)
+        #print("Sending message message '%s'" % (message,), flush=True)
         self.socket.sendto(json.dumps(message).encode('utf-8'), ('localhost', self.port))
 
     def send_args(self, dst, type, MID, term, value):
@@ -135,6 +134,7 @@ class Replica:
             if self.events[i][0] == MID:
                 self.events.pop(i)
                 break
+        print("event remained")
 
     def consider_append(self, msg):
         if len(msg['entries']) == 0:  # if not a heartbeat
@@ -190,8 +190,7 @@ class Replica:
             if len(ready) == 1:
                 data, addr = self.socket.recvfrom(65535)
                 msg = json.loads(data.decode('utf-8'))
-                if msg['type'] != 'induce_me':
-                    print("Received message '%s'" % (msg,), flush=True)
+                #print("Received message '%s'" % (msg,), flush=True)
 
                 term = msg.get('term')
                 if term is not None and term > self.currentTerm:
