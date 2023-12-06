@@ -140,7 +140,9 @@ class Replica:
         print("event remained")
 
     def consider_append(self, msg):
-        if len(msg['entries']) == 0:  # if not a heartbeat
+        if len(msg['entries']) == 0:  # if it is a heartbeat
+            if msg['leaderCommit'] >= len(self.log):
+                self.send_args(self.leader, 'induce_me', msg['MID'], None, self.commitIndex)
             return
         prev_i = msg['prevLogIndex']
         if len(self.log) > prev_i + 1 and self.log[prev_i + 1:] == msg['entries']:
