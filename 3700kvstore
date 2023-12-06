@@ -286,7 +286,7 @@ class Replica:
                 if currentTime - self.last_heartbeat > HEARTBEAT:
                     self.last_heartbeat = currentTime
                     self.send_append(None, '', self.prevIndex(), self.prevTerm(), [])
-                if self.events[0][0] - time.time() > TIMEOUT:
+                if len(self.events) > 0 and self.events[0][0] - time.time() > TIMEOUT:
                     print("put timed out")
                     MID = self.events[0][1]
                     msg = self.pending[MID]['msg']
