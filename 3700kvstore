@@ -33,6 +33,8 @@ class Replica:
         self.pending = {}  # 'MID' : {'msg': msg, 'numVotes': set(votes), 'index': the index it is given in the log}
         self.events = []  # time : 'MID' the first will always expire first
 
+        self.commitIndex = -1  # the last know index to be committed to the leader's log (got consensus)
+
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.bind(('localhost', 0))
 
@@ -87,13 +89,14 @@ class Replica:
     def put_request(self, msg):
         if self.status == 'leader':
             entry = (self.currentTerm, (msg['key'], msg['value']))
-            self.send_append(None, msg['MID'], self.commitIndex(), self.lastTerm(), [entry])
+            self.send_append(None, msg['MID'], self.prevIndex(), self.lastTerm(), [entry])
             self.log.append(entry)
-            self.pending[msg['MID']] = {'msg': msg, 'vote_count': set(), 'index': self.commitIndex()}
+            self.pending[msg['MID']] = {'msg': msg, 'vote_count': set(), 'index': self.prevIndex()}
             self.events.append((time.time(), msg['MID']))
 
     def apply_put(self, msg):
         self.apply_log()
+        self.commitIndex = self.lastApplied  # only called for the leader
         self.ok(msg, None)
 
     def apply_log(self):
@@ -101,7 +104,7 @@ class Replica:
         key, value = self.log[self.lastApplied][ENTRY]
         self.data[key] = value
 
-    def commitIndex(self):
+    def prevIndex(self):
         return len(self.log) - 1
 
     def lastTerm(self):
@@ -113,13 +116,13 @@ class Replica:
         self.votedFor = self.id
         self.num_votes = set()
         self.send({'src': self.id, 'dst': BROADCAST, 'leader': self.leader, 'type': 'candidacy',
-                   'lastTerm': self.lastTerm(), 'lastIndex': len(self.log), 'term': self.currentTerm})
+                   'lastTerm': self.lastTerm(), 'lastIndex': self.prevIndex(), 'term': self.currentTerm})
 
     def vote(self, msg):
         if msg['term'] < self.currentTerm:
             return  # False
         if self.votedFor is None or self.votedFor == msg['src']:
-            if msg['lastTerm'] >= self.lastTerm():
+            if msg['lastTerm'] >= self.lastTerm() and msg['lastIndex'] >= self.prevIndex():
                 self.votedFor = msg['src']
                 self.send_args(msg['src'], 'vote', None, self.currentTerm, None)
                 self.last_heartbeat = time.time()
@@ -133,18 +136,24 @@ class Replica:
                 break
 
     def consider_append(self, msg):
-        if 'prevLogTerm' not in msg:
-            return  # it was a heartbeat or its content was already applied
-        prev_i = msg['prevLogIndex']
-        if len(self.log) > prev_i + 1 and self.log[prev_i + 1:] == msg['entries']:
-            return  # already applied, probably duplicate message
-        if prev_i == -1 \
-                or (len(self.log) > msg['prevLogIndex']  # if index is in the log
-                    and self.log[prev_i][TERM] == msg['prevLogTerm']):
-            for i in range(len(self.log) - 1 - prev_i):
-                self.log.pop(len(self.log) - 1)
-            self.log.extend(msg['entries'])
-            self.send_args(self.leader, 'agree', msg['MID'], self.currentTerm, self.commitIndex())
+        if not msg['entries'].isEmpty():  # if not a heartbeat
+            prev_i = msg['prevLogIndex']
+            if len(self.log) > prev_i + 1 and self.log[prev_i + 1:] == msg['entries']:
+                return  # already applied, probably duplicate message
+            if prev_i == -1 \
+                    or (len(self.log) > msg['prevLogIndex']  # if index is in the log
+                        and self.log[prev_i][TERM] == msg['prevLogTerm']):
+                for i in range(len(self.log) - 1 - prev_i):
+                    self.log.pop(len(self.log) - 1)
+                self.log.extend(msg['entries'])
+                self.send_args(self.leader, 'agree', msg['MID'], self.currentTerm, self.prevIndex())
+                # If leaderCommit > commitIndex, set commitIndex =
+                # min(leaderCommit, index of last new entry)
+        if msg['leaderCommit'] > self.commitIndex:
+            self.commitIndex = min(msg['leaderCommit'], self.prevIndex())
+            while self.commitIndex > self.lastApplied:
+                self.apply_log()
+
         else:
             self.send_args(self.leader, 'induce_me', msg['MID'], None, self.log)
 
@@ -263,6 +272,8 @@ class Replica:
             if self.status == 'leader':
                 if currentTime - self.last_heartbeat > HEARTBEAT:
                     self.last_heartbeat = currentTime
+                    self.send_append(None, '', self.commitIndex(), self.lastTerm(), [])
+
                     self.send_args(BROADCAST, 'AppendEntries', None, self.currentTerm, None)  # Heartbeat
                 # TODO
 
