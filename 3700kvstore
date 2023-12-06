@@ -149,13 +149,14 @@ class Replica:
                 self.send_args(self.leader, 'agree', msg['MID'], self.currentTerm, self.prevIndex())
                 # If leaderCommit > commitIndex, set commitIndex =
                 # min(leaderCommit, index of last new entry)
+            else:
+                self.send_args(self.leader, 'induce_me', msg['MID'], None, self.log)
         if msg['leaderCommit'] > self.commitIndex:
             self.commitIndex = min(msg['leaderCommit'], self.prevIndex())
             while self.commitIndex > self.lastApplied:
                 self.apply_log()
 
-        else:
-            self.send_args(self.leader, 'induce_me', msg['MID'], None, self.log)
+
 
     def induce(self, msg):
         log_len = len(msg['value'])
