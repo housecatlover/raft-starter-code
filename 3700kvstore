@@ -87,7 +87,7 @@ class Replica:
         self.ok(msg, value)
 
     def put_request(self, msg):
-        if self.status == 'leader':
+        if self.status == 'leader' and msg['MID'] not in self.pending:  # no duplicate
             entry = (self.currentTerm, (msg['key'], msg['value']))
             self.send_append(None, msg['MID'], self.prevIndex(), self.prevTerm(), [entry])
             self.log.append(entry)
