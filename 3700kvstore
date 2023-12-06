@@ -34,6 +34,7 @@ class Replica:
         self.events = []  # time : 'MID' the first will always expire first
 
         self.commitIndex = -1  # the last know index to be committed to the leader's log (got consensus)
+        self.matchIndex = {}
 
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.bind(('localhost', 0))
@@ -136,25 +137,30 @@ class Replica:
                 break
 
     def consider_append(self, msg):
-        if len(msg['entries']) != 0:  # if not a heartbeat
-            prev_i = msg['prevLogIndex']
-            if len(self.log) > prev_i + 1 and self.log[prev_i + 1:] == msg['entries']:
-                return  # already applied, probably duplicate message
-            if prev_i == -1 \
-                    or (len(self.log) > msg['prevLogIndex']  # if index is in the log
-                        and self.log[prev_i][TERM] == msg['prevLogTerm']):
-                for i in range(len(self.log) - 1 - prev_i):
-                    self.log.pop(len(self.log) - 1)
-                self.log.extend(msg['entries'])
-                self.send_args(self.leader, 'agree', msg['MID'], self.currentTerm, self.prevIndex())
-            else:
-                self.send_args(self.leader, 'induce_me', msg['MID'], None, self.log)
-        if msg['leaderCommit'] > self.commitIndex:
-            self.commitIndex = min(msg['leaderCommit'], self.prevIndex())
-            while self.commitIndex > self.lastApplied:
-                self.apply_log()
+        if len(msg['entries']) == 0:  # if not a heartbeat
+            return
+        prev_i = msg['prevLogIndex']
+        if len(self.log) > prev_i + 1 and self.log[prev_i + 1:] == msg['entries']:
+            return  # already applied, probably duplicate message
+        if prev_i == -1 \
+                or (len(self.log) > msg['prevLogIndex']  # if index is in the log
+                    and self.log[prev_i][TERM] == msg['prevLogTerm']):
+            for i in range(len(self.log) - 1 - prev_i):
+                self.log.pop(len(self.log) - 1)
+            self.log.extend(msg['entries'])
+            self.send_args(self.leader, 'agree', msg['MID'], self.currentTerm, self.prevIndex())
+            if msg['leaderCommit'] > self.commitIndex:
+                self.commitIndex = min(msg['leaderCommit'], self.prevIndex())
+                while self.commitIndex > self.lastApplied:
+                    self.apply_log()
+        else:
+            self.send_args(self.leader, 'induce_me', msg['MID'], None, self.commitIndex)
 
     def induce(self, msg):
+        index = msg['value']
+        self.send_append(msg['src'], msg['MID'], index, self.log[index][TERM], self.log[index + 1:])
+
+    def deprecated_induce(self, msg):
         log_len = len(msg['value'])
         for index in range(min(log_len, len(self.log)) - 1, -1, -1):
             if msg['value'][index] == self.log[index]:  # if the value is the same at this index
@@ -214,6 +220,13 @@ class Replica:
                 if self.status == 'leader':
                     if msg['type'] == 'agree':
                         target = self.pending.get(msg['MID'])
+
+                        # update matchIndex
+                        current = self.matchIndex.get(msg['src'])
+                        if current is None:
+                            current = -1
+                        self.matchIndex[msg['src']] = max(target['index'], current)
+
                         if target is not None:
                             # intuiting votes
                             recheck = set()
