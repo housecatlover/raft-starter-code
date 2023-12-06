@@ -165,8 +165,9 @@ class Replica:
         for n in range(len(self.pending)):
             MID = self.events[0][1]  # [(time, MID)]
             print(MID)
-            self.fail(self.pending[MID]['msg'])
+            msg = self.pending[MID]['msg']
             self.forget(MID)
+            self.fail(msg)
 
     def run(self):
         while True:
