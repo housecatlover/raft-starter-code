@@ -68,9 +68,11 @@ class Replica:
                    'entries': entries, 'leaderCommit': self.lastApplied})
 
     def fail(self, msg):
+        print('failing ' + msg['MID'])
         self.send_args(msg['src'], 'fail', msg['MID'], None, None)
 
     def ok(self, msg, value):
+        print('oking ' + msg['MID'])
         self.send_args(msg['src'], 'ok', msg['MID'], None, value)
 
     def redirect(self, msg):
@@ -87,6 +89,7 @@ class Replica:
         self.ok(msg, value)
 
     def put_request(self, msg):
+        print('got put request ' + msg['MID'])
         if msg['MID'] in self.pending:
             print('duplicate request')
             return
@@ -132,6 +135,7 @@ class Replica:
                 return
 
     def forget(self, MID):
+        print('forgetting ' + MID)
         self.pending.pop(MID)
         for i in range(len(self.events)):  # should be near the front of the list
             if self.events[i][0] == MID:
