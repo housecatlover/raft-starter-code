@@ -34,7 +34,7 @@ class Replica:
         self.events = []  # time, 'MID' the first will always expire first
 
         self.commitIndex = -1  # the last know index to be committed to the leader's log (got consensus)
-        self.matchIndex = {}
+        self.matchIndex = {}  # id: max known index
 
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.bind(('localhost', 0))
@@ -170,12 +170,14 @@ class Replica:
             self.send_args(self.leader, 'induce_me', msg['MID'], None, self.commitIndex)
 
     def induce(self, msg):
-        index = msg['value']
-        if index >= len(self.log):
-            print(msg)
-            print(self.commitIndex)
-            print(len(self.log))
-            return
+        index = self.matchIndex.get(msg['src'])
+        if index is None:
+            index = msg['value']
+            if index >= len(self.log):
+                print(msg)
+                print(self.commitIndex)
+                print(len(self.log))
+                return
         self.send_append(msg['src'], msg['MID'], index, self.log[index][TERM], self.log[index + 1:])
 
     def deprecated_induce(self, msg):
@@ -240,13 +242,14 @@ class Replica:
                 if self.status == 'leader':
                     if msg['type'] == 'agree':
 
+                        # update matchIndex
+                        current = self.matchIndex.get(msg['src'])
+                        if current is None:
+                            current = -1
+                        self.matchIndex[msg['src']] = max(msg['value'], current)
+
                         target = self.pending.get(msg['MID'])
                         if target is not None:
-                            # update matchIndex
-                            current = self.matchIndex.get(msg['src'])
-                            if current is None:
-                                current = -1
-                            self.matchIndex[msg['src']] = max(target['index'], current)
                             # intuiting votes
                             recheck = set()
                             for MID in self.pending.keys():
@@ -309,12 +312,12 @@ class Replica:
                 if len(self.pending) > 2:
                     print('number pending ' + str(len(self.pending)) + 'number of votes on the first event ' +
                           str(self.pending[self.events[0][1]]['vote_count']))
-                while len(self.events) > 0 and time.time() - self.events[0][0] > TIMEOUT:
-                    print("put timed out")
-                    MID = self.events[0][1]
-                    msg = self.pending[MID]['msg']
-                    self.forget(MID)
-                    self.fail(msg)
+                # while len(self.events) > 0 and time.time() - self.events[0][0] > TIMEOUT:
+                #     print("put timed out")
+                #     MID = self.events[0][1]
+                #     msg = self.pending[MID]['msg']
+                #     self.forget(MID)
+                #     self.fail(msg)
 
 
 if __name__ == "__main__":
