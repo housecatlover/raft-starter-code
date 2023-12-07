@@ -191,7 +191,7 @@ class Replica:
         self.send_append(msg['src'], msg['MID'], -1, 0, self.log)
 
     def resolve_log(self):
-        print("forgetting: " + str(self.events), flush=True)
+        print("redirecting: " + str(self.events), flush=True)
         for n in range(len(self.pending)):
             MID = self.events[0][1]  # [(time, MID)]
             if MID not in self.pending:
@@ -200,7 +200,8 @@ class Replica:
             else:
                 msg = self.pending[MID]['msg']
                 self.forget(MID)
-                self.fail(msg)
+                self.redirect(msg)
+                # self.fail(msg)
 
     def run(self):
         while True:
