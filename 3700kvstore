@@ -308,7 +308,7 @@ class Replica:
                 if len(self.pending) > 2:
                     print('number pending ' + str(len(self.pending)) + 'number of votes on the first event ' +
                           str(self.pending[self.events[0][1]]['vote_count']))
-                if len(self.events) > 0 and time.time() - self.events[0][0] > TIMEOUT:
+                while len(self.events) > 0 and time.time() - self.events[0][0] > TIMEOUT:
                     print("put timed out")
                     MID = self.events[0][1]
                     msg = self.pending[MID]['msg']
