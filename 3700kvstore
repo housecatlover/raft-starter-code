@@ -96,7 +96,12 @@ class Replica:
             return
         if self.status == 'leader':  # no duplicate
             entry = (self.currentTerm, (msg['key'], msg['value']))
-            self.send_append(None, msg['MID'], self.prevIndex(), self.prevTerm(), [entry])
+            # self.send_append(None, msg['MID'], self.prevIndex(), self.prevTerm(), [entry])
+            for follower in self.others:
+                index = self.matchIndex.get(follower)  # send append from the earliest known index
+                if index is None:
+                    index = max(len(self.log) - 50, 0)
+                self.induce_from(msg['MID'], index, follower)
             self.log.append(entry)
             self.pending[msg['MID']] = {'msg': msg, 'vote_count': set(self.id), 'index': self.prevIndex()}
             self.events.append((time.time(), msg['MID']))
@@ -174,13 +179,19 @@ class Replica:
     def induce(self, msg):
         index = self.matchIndex.get(msg['src'])
         if index is None:
-            index = msg['value']
-            if index >= len(self.log):
-                print(msg)
-                print(self.commitIndex)
-                print(len(self.log))
-                return
-        self.send_append(msg['src'], msg['MID'], index, self.log[index][TERM], self.log[index + 1:])
+            index = msg['value']  # if it's an induce me request
+        self.induce_from(msg['MID'], index, msg['src'])
+
+    def induce_from(self, MID, index, dst):
+        if index >= len(self.log):
+            print('tried to induce starting after the leaders log ' + str(index) + ' > ' + str(len(self.log)))
+            return
+        if len(self.log) - index < 51:
+            self.send_append(dst, MID, index, self.log[index][TERM], self.log[index + 1:])
+        else:
+            self.send_append(dst, MID, index, self.log[index][TERM], self.log[index + 1:index + 51])
+            self.induce_from(MID, index + 50, dst)
+
 
     def deprecated_induce(self, msg):
         log_len = len(msg['value'])
