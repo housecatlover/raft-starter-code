@@ -144,6 +144,8 @@ class Replica:
         print("event remained", flush=True)
 
     def consider_append(self, msg):
+        if len(msg['entries'] > 1):
+            print('an induction was just delivered')
         if len(msg['entries']) == 0:  # if it is a heartbeat
             if msg['leaderCommit'] >= len(self.log):
                 self.send_args(self.leader, 'induce_me', msg['MID'], None, self.commitIndex)
