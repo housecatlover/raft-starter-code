@@ -37,6 +37,9 @@ class Replica:
         self.commitIndex = -1  # the last know index to be committed to the leader's log (got consensus)
         self.matchIndex = {}  # id: max known index
 
+        self.redirect_queue = []  # all of the messages this replica has to redirect
+        self.redirect_timeout = time.time()  # the time of the last redirection batch
+
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.bind(('localhost', 0))
 
@@ -46,8 +49,9 @@ class Replica:
         # print("Sent hello message: %s" % hello, flush=True)
 
     def send(self, message):
-        if message['type'] == 'AppendEntries' and message['dst'] == BROADCAST:
-            self.last_heartbeat = time.time()
+        # print('sending ' + str(message))
+        # if message['type'] == 'AppendEntries' and message['dst'] == BROADCAST:
+        #     self.last_heartbeat = time.time()
         # print("Sending message message '%s'" % (message,), flush=True)
         self.socket.sendto(json.dumps(message).encode('utf-8'), ('localhost', self.port))
 
@@ -63,10 +67,13 @@ class Replica:
         self.send(message)
 
     def send_append(self, dst, MID, prevLogIndex, prevLogTerm, entries):
-        self.send({"src": self.id, "dst": BROADCAST if dst is None else dst, "leader": self.leader,
-                   "type": 'AppendEntries', 'MID': MID, 'term': self.currentTerm,
+        message = {"src": self.id, "dst": BROADCAST if dst is None else dst, "leader": self.leader,
+                   "type": 'AppendEntries', 'term': self.currentTerm,
                    'prevLogIndex': prevLogIndex, 'prevLogTerm': prevLogTerm,
-                   'entries': entries, 'leaderCommit': self.lastApplied})
+                   'entries': entries, 'leaderCommit': self.lastApplied}
+        if MID is not None:
+            message['MID'] = MID
+        self.send(message)
 
     def fail(self, msg):
         #print('failing ' + msg['MID'], flush=True)
@@ -76,11 +83,14 @@ class Replica:
         #print('oking ' + msg['MID'], flush=True)
         self.send_args(msg['src'], 'ok', msg['MID'], None, value)
 
+    def send_redirect(self, msg):
+        self.send_args(msg['src'], 'redirect', msg['MID'], None, None)
+
     def redirect(self, msg):
         if self.leader is None:
             self.fail(msg)
         if self.status != 'leader':
-            self.send_args(msg['src'], 'redirect', msg['MID'], None, None)
+            self.redirect_queue.append(msg)
             return True
         return False
 
@@ -97,13 +107,14 @@ class Replica:
         if self.status == 'leader':  # no duplicate
             entry = (self.currentTerm, (msg['key'], msg['value']))
             # self.send_append(None, msg['MID'], self.prevIndex(), self.prevTerm(), [entry])
-            for follower in self.others:
-                index = self.matchIndex.get(follower)  # send append from the earliest known index
-                if index is None:
-                    index = max(len(self.log) - 50, 0)
-                self.induce_from(msg['MID'], index, follower)
             self.log.append(entry)
-            self.pending[msg['MID']] = {'msg': msg, 'vote_count': set(self.id), 'index': self.prevIndex()}
+            #self.update_followers()
+            # for follower in self.others:
+            #     index = self.matchIndex.get(follower)  # send append from the earliest known index
+            #     if index is None:
+            #         index = max(len(self.log) - 50, 0)
+            #     self.induce_from(msg['MID'], index, follower)
+            self.pending[msg['MID']] = {'msg': msg, 'index': self.prevIndex()}
             self.events.append((time.time(), msg['MID']))
 
     def apply_put(self, msg):
@@ -126,6 +137,7 @@ class Replica:
         print('vote for me')
         self.currentTerm += 1
         self.status = 'candidate'
+        self.leader = BROADCAST
         self.votedFor = self.id
         self.num_votes = set()
         self.send({'src': self.id, 'dst': BROADCAST, 'leader': self.leader, 'type': 'candidacy',
@@ -155,12 +167,12 @@ class Replica:
     def consider_append(self, msg):
         if len(msg['entries']) == 0:  # if it is a heartbeat
             if msg['leaderCommit'] >= len(self.log):
-                self.send_args(self.leader, 'induce_me', msg['MID'], None, self.commitIndex)
+                self.send_args(self.leader, 'induce_me', msg.get('MID'), None, self.commitIndex)
             return
         prev_i = msg['prevLogIndex']
         if len(self.log) > prev_i + 1 and self.log[prev_i + 1:] == msg['entries']:
             # print('was skipping the application of append since it was already there')
-            self.send_args(self.leader, 'agree', msg['MID'], self.currentTerm, self.prevIndex())
+            self.send_args(self.leader, 'agree', msg.get('MID'), self.currentTerm, self.prevIndex())
             return  # already applied, probably duplicate message
         if prev_i == -1 \
                 or (len(self.log) > msg['prevLogIndex']  # if index is in the log
@@ -168,19 +180,26 @@ class Replica:
             for i in range(len(self.log) - 1 - prev_i):
                 self.log.pop(len(self.log) - 1)
             self.log.extend(msg['entries'])
-            self.send_args(self.leader, 'agree', msg['MID'], self.currentTerm, self.prevIndex())
+            self.send_args(self.leader, 'agree', msg.get('MID'), self.currentTerm, self.prevIndex())
             if msg['leaderCommit'] > self.commitIndex:
                 self.commitIndex = min(msg['leaderCommit'], self.prevIndex())
                 while self.commitIndex > self.lastApplied:
                     self.apply_log()
         else:
-            self.send_args(self.leader, 'induce_me', msg['MID'], None, self.commitIndex)
+            self.send_args(self.leader, 'induce_me', msg.get('MID'), None, self.commitIndex)
 
     def induce(self, msg):
         index = self.matchIndex.get(msg['src'])
         if index is None:
             index = msg['value']  # if it's an induce me request
-        self.induce_from(msg['MID'], index, msg['src'])
+        self.induce_from(msg.get('MID'), index, msg['src'])
+
+    def update_followers(self):
+        for follower in self.others:
+            index = self.matchIndex.get(follower)  # send append from the earliest known index
+            if index is None:
+                index = max(len(self.log) - 50, 0)
+            self.induce_from(None, index, follower)
 
     def induce_from(self, MID, index, dst):
         if index >= len(self.log):
@@ -218,13 +237,23 @@ class Replica:
                 self.redirect(msg)
                 # self.fail(msg)
 
+    def highest_concensus(self):
+        indices = []
+        for index in self.matchIndex.values():
+            indices.append(index)
+        indices.append(len(self.log) + 1)
+        sorted(indices)
+        if len(indices) > 2:
+            return indices[-3]
+        return self.commitIndex
+
     def run(self):
         while True:
             ready = select.select([self.socket], [], [], .01)[0]
             if len(ready) == 1:
                 data, addr = self.socket.recvfrom(65535)
                 msg = json.loads(data.decode('utf-8'))
-                # print("Received message '%s'" % (msg,), flush=True)
+                #print("Received message '%s'" % (msg,), flush=True)
 
                 term = msg.get('term')
                 if term is not None and term > self.currentTerm:
@@ -259,25 +288,40 @@ class Replica:
                             current = -1
                         self.matchIndex[msg['src']] = max(msg['value'], current)
 
-                        target = self.pending.get(msg['MID'])
-                        if target is not None:
-                            # intuiting votes
-                            recheck = set()
-                            for MID in self.pending.keys():
-                                entry = self.pending[MID]
-                                # if there is something pending that is a prerequisite to this vote...
-                                if entry['index'] < target['index']:
-                                    entry['vote_count'].add(msg['src'])  # consider the follower as having voted for it
-                                    recheck.add(MID)
-                            for MID in recheck:  # TODO refactor
-                                entry = self.pending[MID]
-                                if len(entry['vote_count']) > int(len(self.others) / 2):
-                                    self.apply_put(entry['msg'])
-                                    self.forget(MID)
-                            target['vote_count'].add(msg['src'])  # increment the votes on the targeted pending message
-                            if len(target['vote_count']) > int(len(self.others) / 2):  # TODO refactor
-                                self.apply_put(target['msg'])
-                                self.forget(msg['MID'])
+                        highest_consensus = self.highest_concensus()
+
+                        while self.lastApplied < highest_consensus:
+                            self.apply_log()
+                        self.commitIndex = self.lastApplied
+
+                        done = set()
+                        for MID in self.pending.keys():
+                            entry = self.pending[MID]
+                            if entry['index'] <= self.commitIndex:
+                                self.ok(entry['msg'], None)
+                                done.add(MID)
+                        for MID in done:
+                            self.forget(MID)
+
+                        # target = self.pending.get(msg['MID'])
+                        # if target is not None:
+                        #     # intuiting votes
+                        #     recheck = set()
+                        #     for MID in self.pending.keys():
+                        #         entry = self.pending[MID]
+                        #         # if there is something pending that is a prerequisite to this vote...
+                        #         if entry['index'] < target['index']:
+                        #             entry['vote_count'].add(msg['src'])  # consider the follower as having voted for it
+                        #             recheck.add(MID)
+                        #     for MID in recheck:  # TODO refactor
+                        #         entry = self.pending[MID]
+                        #         if len(entry['vote_count']) > int(len(self.others) / 2):
+                        #             self.apply_put(entry['msg'])
+                        #             self.forget(MID)
+                        #     target['vote_count'].add(msg['src'])  # increment the votes on the targeted pending message
+                        #     if len(target['vote_count']) > int(len(self.others) / 2):  # TODO refactor
+                        #         self.apply_put(target['msg'])
+                        #         self.forget(msg['MID'])
                     elif msg['type'] == 'induce_me':
                         self.induce(msg)
 
@@ -321,14 +365,21 @@ class Replica:
                 self.elect()
                 continue
 
+            if currentTime - self.redirect_timeout > TIMEOUT:
+                while len(self.redirect_queue) != 0:
+                    self.send_redirect(self.redirect_queue.pop())
+                self.redirect_timeout = currentTime
+
             if self.status == 'leader':
-                print(self.matchIndex, flush=True)
+                print(str(self.matchIndex) + ' leader commit: ' + str(self.lastApplied) + \
+                      ' leader len: ' + str(len(self.log)) + ' pending: ' + str(len(self.pending)), flush=True)
+                if len(self.pending) > 0:
+                    print('number pending ' + str(len(self.pending)))
                 if currentTime - self.last_heartbeat > HEARTBEAT:
                     self.last_heartbeat = currentTime
-                    self.send_append(None, '', self.prevIndex(), self.prevTerm(), [])
-                if len(self.pending) > 2:
-                    print('number pending ' + str(len(self.pending)) + 'number of votes on the first event ' +
-                          str(self.pending[self.events[0][1]]['vote_count']))
+                    #self.send_append(None, '', self.prevIndex(), self.prevTerm(), [])
+                    self.update_followers()
+
                 if len(self.events) > 0 and time.time() - self.events[0][0] > MESSAGETIMEOUT:
                     print("put timed out, see if I'm still the leader")
                     self.last_heartbeat = time.time()
