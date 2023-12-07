@@ -97,7 +97,7 @@ class Replica:
             entry = (self.currentTerm, (msg['key'], msg['value']))
             self.send_append(None, msg['MID'], self.prevIndex(), self.prevTerm(), [entry])
             self.log.append(entry)
-            self.pending[msg['MID']] = {'msg': msg, 'vote_count': set(), 'index': self.prevIndex()}
+            self.pending[msg['MID']] = {'msg': msg, 'vote_count': set(self.id), 'index': self.prevIndex()}
             self.events.append((time.time(), msg['MID']))
 
     def apply_put(self, msg):
