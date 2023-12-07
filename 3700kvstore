@@ -6,6 +6,7 @@ import argparse, socket, time, json, select, struct, sys, math, os, random, secr
 BROADCAST = "FFFF"
 TIMEOUT = .2
 HEARTBEAT = TIMEOUT / 2  # how often heartbeats should be sent
+MESSAGETIMEOUT = TIMEOUT * 2
 
 TERM = 0
 ENTRY = 1
@@ -25,7 +26,7 @@ class Replica:
         self.status = 'follower'
 
         self.votedFor = None
-        self.num_votes = set()
+        self.num_votes = set()  # todo refactor to votes
 
         self.log = []  # pair <term, <key, value>> as defined in the constants
         self.data = {}  # the key, value dict that is the store
@@ -78,7 +79,7 @@ class Replica:
     def redirect(self, msg):
         if self.leader is None:
             self.fail(msg)
-        if self.leader != self.id:
+        if self.status != 'leader':
             self.send_args(msg['src'], 'redirect', msg['MID'], None, None)
             return True
         return False
@@ -117,6 +118,7 @@ class Replica:
         return self.log[-1][TERM] if len(self.log) > 0 else 0
 
     def elect(self):
+        print('vote for me')
         self.currentTerm += 1
         self.status = 'candidate'
         self.votedFor = self.id
@@ -193,8 +195,8 @@ class Replica:
         self.send_append(msg['src'], msg['MID'], -1, 0, self.log)
 
     def resolve_log(self):
-        print("redirecting: " + str(self.events), flush=True)
         for n in range(len(self.pending)):
+            print("redirecting: " + str(self.events), flush=True)
             MID = self.events[0][1]  # [(time, MID)]
             if MID not in self.pending:
                 print("event was referring to non-existent pending", flush=True)
@@ -217,8 +219,6 @@ class Replica:
                 if term is not None and term > self.currentTerm:
                     self.currentTerm = term
                     self.votedFor = None
-                    if self.status == 'leader':
-                        self.resolve_log()
                     self.status = 'follower'
 
                 if msg['src'] == self.leader:
@@ -273,14 +273,18 @@ class Replica:
                 if self.status == 'candidate':
                     if msg['type'] == 'vote' and msg['term'] == self.currentTerm:
                         self.num_votes.add(msg['src'])
+                        print('votes: ' + str(self.num_votes) + ' term: ' + str(self.currentTerm))
                         if len(self.num_votes) >= len(self.others) / 2:
+                            print(str(len(self.num_votes)) + '>=' + str(len(self.others) / 2))
                             self.status = 'leader'
                             self.leader = self.id
+                            # the log is retained as it is still the leader
                             # other leader things
                     elif msg['type'] == 'AppendEntries':
                         if msg['leader'] != self.leader and msg['term'] >= self.currentTerm:
                             self.status = 'follower'
                             self.leader = msg['leader']
+                            self.resolve_log()
 
                 if self.status == 'follower':
                     if msg['type'] == 'candidacy':
@@ -293,12 +297,14 @@ class Replica:
                     elif msg['type'] == 'AppendEntries':
                         if msg['leader'] != self.leader and msg['term'] >= self.currentTerm:
                             self.leader = msg['leader']
+                            self.resolve_log()
                         self.consider_append(msg)
 
             # back to running every tick
             currentTime = time.time()
             if self.status != 'leader' and \
                     currentTime - self.last_heartbeat > self.timeout:
+                print('I SHOULD TIMEOUT')
                 self.last_heartbeat = currentTime
                 self.timeout = TIMEOUT * (random.random() + 1)  # 1-2 x timeout
                 self.elect()
@@ -312,13 +318,11 @@ class Replica:
                 if len(self.pending) > 2:
                     print('number pending ' + str(len(self.pending)) + 'number of votes on the first event ' +
                           str(self.pending[self.events[0][1]]['vote_count']))
-                # while len(self.events) > 0 and time.time() - self.events[0][0] > TIMEOUT:
-                #     print("put timed out")
-                #     MID = self.events[0][1]
-                #     msg = self.pending[MID]['msg']
-                #     self.forget(MID)
-                #     self.fail(msg)
-
+                if len(self.events) > 0 and time.time() - self.events[0][0] > MESSAGETIMEOUT:
+                    print("put timed out, see if I'm still the leader")
+                    self.last_heartbeat = time.time()
+                    self.timeout = TIMEOUT * (random.random() + 1)
+                    self.elect()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='run a key-value store')
