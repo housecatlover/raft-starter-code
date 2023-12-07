@@ -221,11 +221,13 @@ class Replica:
                 if msg['type'] == 'get':
                     print('received get')
                     if self.redirect(msg):
+                        print('redirected get')
                         continue
                     self.get_request(msg)  # will have a MID and a key to be gotten
                 elif msg['type'] == 'put':
                     print('received put')
                     if self.redirect(msg):
+                        print('redirected put')
                         continue
                     self.put_request(msg)
 
