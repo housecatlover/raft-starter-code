@@ -302,6 +302,7 @@ class Replica:
                 continue
 
             if self.status == 'leader':
+                print(self.matchIndex, flush=True)
                 if currentTime - self.last_heartbeat > HEARTBEAT:
                     self.last_heartbeat = currentTime
                     self.send_append(None, '', self.prevIndex(), self.prevTerm(), [])
