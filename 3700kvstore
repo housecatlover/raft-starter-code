@@ -4,7 +4,7 @@ import argparse, socket, time, json, select, struct, sys, math, os, random, secr
 
 # secrets.token_hex(16)
 BROADCAST = "FFFF"
-TIMEOUT = .25
+TIMEOUT = .2
 HEARTBEAT = TIMEOUT / 2  # how often heartbeats should be sent
 
 TERM = 0
@@ -39,15 +39,15 @@ class Replica:
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.bind(('localhost', 0))
 
-        #("Replica %s starting up" % self.id, flush=True)
+        # ("Replica %s starting up" % self.id, flush=True)
         hello = {"src": self.id, "dst": BROADCAST, "leader": BROADCAST, "type": "hello"}
         self.send(hello)
-        #print("Sent hello message: %s" % hello, flush=True)
+        # print("Sent hello message: %s" % hello, flush=True)
 
     def send(self, message):
         if message['type'] == 'AppendEntries' and message['dst'] == BROADCAST:
             self.last_heartbeat = time.time()
-        #print("Sending message message '%s'" % (message,), flush=True)
+        # print("Sending message message '%s'" % (message,), flush=True)
         self.socket.sendto(json.dumps(message).encode('utf-8'), ('localhost', self.port))
 
     def send_args(self, dst, type, MID, term, value):
@@ -68,11 +68,11 @@ class Replica:
                    'entries': entries, 'leaderCommit': self.lastApplied})
 
     def fail(self, msg):
-        print('failing ' + msg['MID'], flush=True)
+        #print('failing ' + msg['MID'], flush=True)
         self.send_args(msg['src'], 'fail', msg['MID'], None, None)
 
     def ok(self, msg, value):
-        print('oking ' + msg['MID'], flush=True)
+        #print('oking ' + msg['MID'], flush=True)
         self.send_args(msg['src'], 'ok', msg['MID'], None, value)
 
     def redirect(self, msg):
@@ -89,7 +89,7 @@ class Replica:
         self.ok(msg, value)
 
     def put_request(self, msg):
-        print('got put request ' + msg['MID'], flush=True)
+        # print('got put request ' + msg['MID'], flush=True)
         if msg['MID'] in self.pending:
             print('duplicate request', flush=True)
             return
@@ -128,20 +128,21 @@ class Replica:
         if msg['term'] < self.currentTerm:
             return  # False
         if self.votedFor is None or self.votedFor == msg['src']:
-            if msg['lastTerm'] >= self.prevTerm() and msg['lastIndex'] >= self.prevIndex():
+            if msg['lastTerm'] > self.prevTerm() or \
+                    (msg['lastTerm'] == self.prevTerm() and msg['lastIndex'] >= self.prevIndex()):
                 self.votedFor = msg['src']
                 self.send_args(msg['src'], 'vote', None, self.currentTerm, None)
                 self.last_heartbeat = time.time()
                 return
 
     def forget(self, MID):
-        print('forgetting ' + MID, flush=True)
+        # print('forgetting ' + MID, flush=True)
         self.pending.pop(MID)
         for i in range(len(self.events)):  # should be near the front of the list
             if self.events[i][1] == MID:
                 self.events.pop(i)
                 return
-        print("event remained", flush=True)
+        # print("event remained", flush=True)
 
     def consider_append(self, msg):
         if len(msg['entries']) == 0:  # if it is a heartbeat
@@ -150,7 +151,7 @@ class Replica:
             return
         prev_i = msg['prevLogIndex']
         if len(self.log) > prev_i + 1 and self.log[prev_i + 1:] == msg['entries']:
-            print('was skipping the application of append since it was already there')
+            # print('was skipping the application of append since it was already there')
             self.send_args(self.leader, 'agree', msg['MID'], self.currentTerm, self.prevIndex())
             return  # already applied, probably duplicate message
         if prev_i == -1 \
@@ -169,6 +170,12 @@ class Replica:
 
     def induce(self, msg):
         index = msg['value']
+        if index >= len(self.log):
+            print(msg)
+            print(self.commitIndex)
+            print(self.lastApplied)
+            print(self.log)
+            return
         self.send_append(msg['src'], msg['MID'], index, self.log[index][TERM], self.log[index + 1:])
 
     def deprecated_induce(self, msg):
@@ -184,7 +191,7 @@ class Replica:
         self.send_append(msg['src'], msg['MID'], -1, 0, self.log)
 
     def resolve_log(self):
-        print("forgetting: " + str(self.events), flush=True)
+        # print("forgetting: " + str(self.events), flush=True)
         for n in range(len(self.pending)):
             MID = self.events[0][1]  # [(time, MID)]
             if MID not in self.pending:
@@ -201,7 +208,7 @@ class Replica:
             if len(ready) == 1:
                 data, addr = self.socket.recvfrom(65535)
                 msg = json.loads(data.decode('utf-8'))
-                #print("Received message '%s'" % (msg,), flush=True)
+                # print("Received message '%s'" % (msg,), flush=True)
 
                 term = msg.get('term')
                 if term is not None and term > self.currentTerm:
@@ -219,15 +226,13 @@ class Replica:
                     continue
 
                 if msg['type'] == 'get':
-                    print('received get', flush=True)
+                    # print('received get', flush=True)
                     if self.redirect(msg):
-                        print('redirected get', flush=True)
                         continue
                     self.get_request(msg)  # will have a MID and a key to be gotten
                 elif msg['type'] == 'put':
-                    print('received put', flush=True)
+                    # print('received put', flush=True)
                     if self.redirect(msg):
-                        print('redirected put', flush=True)
                         continue
                     self.put_request(msg)
 
@@ -300,7 +305,7 @@ class Replica:
                     self.last_heartbeat = currentTime
                     self.send_append(None, '', self.prevIndex(), self.prevTerm(), [])
                 if len(self.pending) > 2:
-                    print('number pending' + str(len(self.pending)) + 'number of votes on the first even' +
+                    print('number pending ' + str(len(self.pending)) + 'number of votes on the first event ' +
                           str(self.pending[self.events[0][1]]['vote_count']))
                 if len(self.events) > 0 and self.events[0][0] - time.time() > TIMEOUT:
                     print("put timed out")
