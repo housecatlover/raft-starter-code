@@ -68,11 +68,11 @@ class Replica:
                    'entries': entries, 'leaderCommit': self.lastApplied})
 
     def fail(self, msg):
-        ('failing ' + msg['MID'])
+        print('failing ' + msg['MID'], flush=True)
         self.send_args(msg['src'], 'fail', msg['MID'], None, None)
 
     def ok(self, msg, value):
-        print('oking ' + msg['MID'])
+        print('oking ' + msg['MID'], flush=True)
         self.send_args(msg['src'], 'ok', msg['MID'], None, value)
 
     def redirect(self, msg):
@@ -89,9 +89,9 @@ class Replica:
         self.ok(msg, value)
 
     def put_request(self, msg):
-        print('got put request ' + msg['MID'])
+        print('got put request ' + msg['MID'], flush=True)
         if msg['MID'] in self.pending:
-            print('duplicate request')
+            print('duplicate request', flush=True)
             return
         if self.status == 'leader':  # no duplicate
             entry = (self.currentTerm, (msg['key'], msg['value']))
@@ -135,13 +135,13 @@ class Replica:
                 return
 
     def forget(self, MID):
-        print('forgetting ' + MID)
+        print('forgetting ' + MID, flush=True)
         self.pending.pop(MID)
         for i in range(len(self.events)):  # should be near the front of the list
             if self.events[i][1] == MID:
                 self.events.pop(i)
                 return
-        print("event remained")
+        print("event remained", flush=True)
 
     def consider_append(self, msg):
         if len(msg['entries']) == 0:  # if it is a heartbeat
@@ -184,11 +184,11 @@ class Replica:
         self.send_append(msg['src'], msg['MID'], -1, 0, self.log)
 
     def resolve_log(self):
-        print("forgetting: " + str(self.events))
+        print("forgetting: " + str(self.events), flush=True)
         for n in range(len(self.pending)):
             MID = self.events[0][1]  # [(time, MID)]
             if MID not in self.pending:
-                print("event was referring to non-existent pending")
+                print("event was referring to non-existent pending", flush=True)
                 self.events.pop(0)
             else:
                 msg = self.pending[MID]['msg']
@@ -219,15 +219,15 @@ class Replica:
                     continue
 
                 if msg['type'] == 'get':
-                    print('received get')
+                    print('received get', flush=True)
                     if self.redirect(msg):
-                        print('redirected get')
+                        print('redirected get', flush=True)
                         continue
                     self.get_request(msg)  # will have a MID and a key to be gotten
                 elif msg['type'] == 'put':
-                    print('received put')
+                    print('received put', flush=True)
                     if self.redirect(msg):
-                        print('redirected put')
+                        print('redirected put', flush=True)
                         continue
                     self.put_request(msg)
 
