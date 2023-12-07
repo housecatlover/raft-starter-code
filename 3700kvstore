@@ -108,12 +108,6 @@ class Replica:
             entry = (self.currentTerm, (msg['key'], msg['value']))
             # self.send_append(None, msg['MID'], self.prevIndex(), self.prevTerm(), [entry])
             self.log.append(entry)
-            #self.update_followers()
-            # for follower in self.others:
-            #     index = self.matchIndex.get(follower)  # send append from the earliest known index
-            #     if index is None:
-            #         index = max(len(self.log) - 50, 0)
-            #     self.induce_from(msg['MID'], index, follower)
             self.pending[msg['MID']] = {'msg': msg, 'index': self.prevIndex()}
             self.events.append((time.time(), msg['MID']))
 
@@ -303,25 +297,6 @@ class Replica:
                         for MID in done:
                             self.forget(MID)
 
-                        # target = self.pending.get(msg['MID'])
-                        # if target is not None:
-                        #     # intuiting votes
-                        #     recheck = set()
-                        #     for MID in self.pending.keys():
-                        #         entry = self.pending[MID]
-                        #         # if there is something pending that is a prerequisite to this vote...
-                        #         if entry['index'] < target['index']:
-                        #             entry['vote_count'].add(msg['src'])  # consider the follower as having voted for it
-                        #             recheck.add(MID)
-                        #     for MID in recheck:  # TODO refactor
-                        #         entry = self.pending[MID]
-                        #         if len(entry['vote_count']) > int(len(self.others) / 2):
-                        #             self.apply_put(entry['msg'])
-                        #             self.forget(MID)
-                        #     target['vote_count'].add(msg['src'])  # increment the votes on the targeted pending message
-                        #     if len(target['vote_count']) > int(len(self.others) / 2):  # TODO refactor
-                        #         self.apply_put(target['msg'])
-                        #         self.forget(msg['MID'])
                     elif msg['type'] == 'induce_me':
                         self.induce(msg)
 
