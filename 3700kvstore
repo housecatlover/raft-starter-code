@@ -134,6 +134,7 @@ class Replica:
                 self.send_args(msg['src'], 'vote', None, self.currentTerm, None)
                 self.last_heartbeat = time.time()
                 return
+        print('voting against' + msg['src'])
 
     def forget(self, MID):
         # print('forgetting ' + MID, flush=True)
@@ -173,8 +174,7 @@ class Replica:
         if index >= len(self.log):
             print(msg)
             print(self.commitIndex)
-            print(self.lastApplied)
-            print(self.log)
+            print(len(self.log))
             return
         self.send_append(msg['src'], msg['MID'], index, self.log[index][TERM], self.log[index + 1:])
 
@@ -191,7 +191,7 @@ class Replica:
         self.send_append(msg['src'], msg['MID'], -1, 0, self.log)
 
     def resolve_log(self):
-        # print("forgetting: " + str(self.events), flush=True)
+        print("forgetting: " + str(self.events), flush=True)
         for n in range(len(self.pending)):
             MID = self.events[0][1]  # [(time, MID)]
             if MID not in self.pending:
