@@ -140,7 +140,7 @@ class Replica:
         for i in range(len(self.events)):  # should be near the front of the list
             if self.events[i][1] == MID:
                 self.events.pop(i)
-                break
+                return
         print("event remained")
 
     def consider_append(self, msg):
@@ -219,10 +219,12 @@ class Replica:
                     continue
 
                 if msg['type'] == 'get':
+                    print('received get')
                     if self.redirect(msg):
                         continue
                     self.get_request(msg)  # will have a MID and a key to be gotten
                 elif msg['type'] == 'put':
+                    print('received put')
                     if self.redirect(msg):
                         continue
                     self.put_request(msg)
