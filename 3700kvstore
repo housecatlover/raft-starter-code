@@ -89,8 +89,8 @@ class Replica:
         if self.leader is None:
             self.fail(msg)
         if self.status != 'leader':
-            self.send_redirect(msg)
-            # self.redirect_queue.append(msg)
+            # self.send_redirect(msg)
+            self.redirect_queue.append(msg)
             return True
         return False
 
@@ -349,7 +349,7 @@ class Replica:
                 continue
 
             current_time = time.time()
-            if current_time - self.redirect_timeout > TIMEOUT:  # minimize partition noise
+            if current_time - self.redirect_timeout > TIMEOUT * 2 or len(self.redirect_queue) > 10:  # minimize partition noise
                 while len(self.redirect_queue) != 0:
                     self.send_redirect(self.redirect_queue.pop())
                 self.redirect_timeout = current_time
