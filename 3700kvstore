@@ -250,6 +250,10 @@ class Replica:
             self.apply_matched()
         elif msg['type'] == 'induce_me':
             self.induce(msg)
+        elif msg['type'] == 'vote' and msg['term'] == self.currentTerm:
+            current = self.matchIndex.get(msg['src'])
+            self.matchIndex[msg['src']] = msg['value'] if current is None else max(current, msg['value'])
+            self.apply_matched()
 
     # handle when a candidate receives a message
     def candidate_recv(self, msg):
@@ -342,7 +346,7 @@ class Replica:
                 continue
 
             current_time = time.time()
-            if current_time - self.redirect_timeout > TIMEOUT:
+            if current_time - self.redirect_timeout > TIMEOUT:  # minimize partition noise
                 while len(self.redirect_queue) != 0:
                     self.send_redirect(self.redirect_queue.pop())
                 self.redirect_timeout = current_time
