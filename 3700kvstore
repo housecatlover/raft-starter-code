@@ -6,7 +6,7 @@ import argparse, socket, time, json, select, struct, sys, math, os, random, secr
 BROADCAST = "FFFF"
 TIMEOUT = .2
 HEARTBEAT = TIMEOUT / 2  # how often heartbeats should be sent
-MESSAGETIMEOUT = TIMEOUT * 2
+LEADER_TIMEOUT = TIMEOUT * 2
 
 TERM = 0
 ENTRY = 1
@@ -20,6 +20,7 @@ class Replica:
 
         self.last_heartbeat = time.time()  # for the follower's this can be time since having heard
         self.timeout = TIMEOUT * (random.random() + 1)  # recalculate on each timeout
+        self.last_consensus = time.time()
 
         self.currentTerm = 0
         self.leader = 'FFFF'  # start as unknown
@@ -32,7 +33,6 @@ class Replica:
         self.data = {}  # the key, value dict that is the store
         self.lastApplied = -1
         self.pending = {}  # 'MID' : {'msg': msg, 'numVotes': set(votes), 'index': the index it is given in the log}
-        self.events = []  # time, 'MID' the first will always expire first
 
         self.commitIndex = -1  # the last know index to be committed to the leader's log (got consensus)
         self.matchIndex = {}  # id: max known index
@@ -80,7 +80,7 @@ class Replica:
         self.send_args(msg['src'], 'fail', msg['MID'], None, None)
 
     def ok(self, msg, value):
-        #print('oking ' + msg['MID'], flush=True)
+        print('oking ' + str(msg), flush=True)
         self.send_args(msg['src'], 'ok', msg['MID'], None, value)
 
     def send_redirect(self, msg):
@@ -109,7 +109,6 @@ class Replica:
             # self.send_append(None, msg['MID'], self.prevIndex(), self.prevTerm(), [entry])
             self.log.append(entry)
             self.pending[msg['MID']] = {'msg': msg, 'index': self.prevIndex()}
-            self.events.append((time.time(), msg['MID']))
 
     def apply_put(self, msg):
         self.apply_log()
@@ -119,6 +118,7 @@ class Replica:
     def apply_log(self):
         self.lastApplied += 1
         key, value = self.log[self.lastApplied][ENTRY]
+        # print('applying ' + key + value, flush=True)
         self.data[key] = value
 
     def prevIndex(self):
@@ -149,14 +149,6 @@ class Replica:
                 return
         print('voting against' + msg['src'])
 
-    def forget(self, MID):
-        # print('forgetting ' + MID, flush=True)
-        self.pending.pop(MID)
-        for i in range(len(self.events)):  # should be near the front of the list
-            if self.events[i][1] == MID:
-                self.events.pop(i)
-                return
-        # print("event remained", flush=True)
 
     def consider_append(self, msg):
         if len(msg['entries']) == 0:  # if it is a heartbeat
@@ -219,17 +211,12 @@ class Replica:
         self.send_append(msg['src'], msg['MID'], -1, 0, self.log)
 
     def resolve_log(self):
-        for n in range(len(self.pending)):
-            print("redirecting: " + str(self.events), flush=True)
-            MID = self.events[0][1]  # [(time, MID)]
-            if MID not in self.pending:
-                print("event was referring to non-existent pending", flush=True)
-                self.events.pop(0)
-            else:
-                msg = self.pending[MID]['msg']
-                self.forget(MID)
-                self.redirect(msg)
-                # self.fail(msg)
+        remove = set()
+        for MID in self.pending.keys():
+            msg = self.pending[MID]['msg']
+            self.redirect(msg)
+            # self.fail(msg)
+        self.pending = {}
 
     def highest_concensus(self):
         indices = []
@@ -240,6 +227,92 @@ class Replica:
         if len(indices) > 2:
             return indices[-3]
         return self.commitIndex
+
+    def leader_recv(self, msg):
+        if msg['type'] == 'agree':
+
+            # update matchIndex
+            current = self.matchIndex.get(msg['src'])
+            if current is None:
+                current = -1
+            self.matchIndex[msg['src']] = max(msg['value'], current)
+
+            highest_consensus = self.highest_concensus()
+
+            while self.lastApplied < highest_consensus:
+                self.apply_log()
+            self.commitIndex = self.lastApplied
+
+            done = set()
+            for MID in self.pending.keys():
+                entry = self.pending[MID]
+                if entry['index'] <= self.commitIndex:
+                    self.ok(entry['msg'], None)
+                    done.add(MID)
+            for MID in done:
+                self.pending.pop(MID)
+            if len(done) > 0:
+                self.last_consensus = time.time()
+
+        elif msg['type'] == 'induce_me':
+            self.induce(msg)
+
+    def candidate_recv(self, msg):
+        if msg['type'] == 'vote' and msg['term'] == self.currentTerm:
+            self.num_votes.add(msg['src'])
+            print('votes: ' + str(self.num_votes) + ' term: ' + str(self.currentTerm))
+            if len(self.num_votes) >= len(self.others) / 2:
+                print(str(len(self.num_votes)) + '>=' + str(len(self.others) / 2))
+                self.status = 'leader'
+                self.leader = self.id
+                self.last_consensus = time.time()
+                # the log is retained as it is still the leader
+                # other leader things
+        elif msg['type'] == 'AppendEntries':
+            if msg['leader'] != self.leader and msg['term'] >= self.currentTerm:
+                self.status = 'follower'
+                self.leader = msg['leader']
+                self.resolve_log()
+
+    def follower_recv(self, msg):
+        if msg['type'] == 'candidacy':
+            self.vote(msg)
+        elif msg['type'] == 'consider':
+            if msg['value']['type'] == 'get':
+                self.get_request(msg['value'])  # will have a MID and a key to be gotten
+            else:
+                self.put_request(msg['value'])
+        elif msg['type'] == 'AppendEntries':
+            if msg['leader'] != self.leader and msg['term'] >= self.currentTerm:
+                self.leader = msg['leader']
+                self.resolve_log()
+            self.consider_append(msg)
+
+    def leader_heartbeat(self):
+        print(str(self.matchIndex) + ' leader commit: ' + str(self.lastApplied) + \
+              ' leader len: ' + str(len(self.log)) + ' pending: ' + str(len(self.pending)), flush=True)
+        if len(self.pending) > 0:
+            print('number pending ' + str(len(self.pending)))
+        if time.time() - self.last_heartbeat > HEARTBEAT:
+            self.last_heartbeat = time.time()
+            #self.send_append(None, '', self.prevIndex(), self.prevTerm(), [])
+            self.update_followers()
+
+        if time.time() - self.last_consensus > LEADER_TIMEOUT:
+            print("consensus timed out, see if I'm still the leader")
+            self.last_heartbeat = time.time()
+            self.timeout = TIMEOUT * (random.random() + 1)
+            self.elect()
+
+    def election_heartbeat(self):
+        if self.status != 'leader' and \
+                time.time() - self.last_heartbeat > self.timeout:
+            print('I SHOULD TIMEOUT')
+            self.last_heartbeat = time.time()
+            self.timeout = TIMEOUT * (random.random() + 1)  # +1 for fewer leader tieouts 1-2 x timeout
+            self.elect()
+            return True
+        return False
 
     def run(self):
         while True:
@@ -274,92 +347,26 @@ class Replica:
                     self.put_request(msg)
 
                 if self.status == 'leader':
-                    if msg['type'] == 'agree':
-
-                        # update matchIndex
-                        current = self.matchIndex.get(msg['src'])
-                        if current is None:
-                            current = -1
-                        self.matchIndex[msg['src']] = max(msg['value'], current)
-
-                        highest_consensus = self.highest_concensus()
-
-                        while self.lastApplied < highest_consensus:
-                            self.apply_log()
-                        self.commitIndex = self.lastApplied
-
-                        done = set()
-                        for MID in self.pending.keys():
-                            entry = self.pending[MID]
-                            if entry['index'] <= self.commitIndex:
-                                self.ok(entry['msg'], None)
-                                done.add(MID)
-                        for MID in done:
-                            self.forget(MID)
-
-                    elif msg['type'] == 'induce_me':
-                        self.induce(msg)
+                    self.leader_recv(msg)
 
                 if self.status == 'candidate':
-                    if msg['type'] == 'vote' and msg['term'] == self.currentTerm:
-                        self.num_votes.add(msg['src'])
-                        print('votes: ' + str(self.num_votes) + ' term: ' + str(self.currentTerm))
-                        if len(self.num_votes) >= len(self.others) / 2:
-                            print(str(len(self.num_votes)) + '>=' + str(len(self.others) / 2))
-                            self.status = 'leader'
-                            self.leader = self.id
-                            # the log is retained as it is still the leader
-                            # other leader things
-                    elif msg['type'] == 'AppendEntries':
-                        if msg['leader'] != self.leader and msg['term'] >= self.currentTerm:
-                            self.status = 'follower'
-                            self.leader = msg['leader']
-                            self.resolve_log()
+                    self.candidate_recv(msg)
 
                 if self.status == 'follower':
-                    if msg['type'] == 'candidacy':
-                        self.vote(msg)
-                    elif msg['type'] == 'consider':
-                        if msg['value']['type'] == 'get':
-                            self.get_request(msg['value'])  # will have a MID and a key to be gotten
-                        else:
-                            self.put_request(msg['value'])
-                    elif msg['type'] == 'AppendEntries':
-                        if msg['leader'] != self.leader and msg['term'] >= self.currentTerm:
-                            self.leader = msg['leader']
-                            self.resolve_log()
-                        self.consider_append(msg)
+                    self.follower_recv(msg)
 
             # back to running every tick
-            currentTime = time.time()
-            if self.status != 'leader' and \
-                    currentTime - self.last_heartbeat > self.timeout:
-                print('I SHOULD TIMEOUT')
-                self.last_heartbeat = currentTime
-                self.timeout = TIMEOUT * (random.random() + 1)  # 1-2 x timeout
-                self.elect()
+            if self.election_heartbeat():
                 continue
 
-            if currentTime - self.redirect_timeout > TIMEOUT:
+            current_time = time.time()
+            if current_time - self.redirect_timeout > TIMEOUT:
                 while len(self.redirect_queue) != 0:
                     self.send_redirect(self.redirect_queue.pop())
-                self.redirect_timeout = currentTime
+                self.redirect_timeout = current_time
 
             if self.status == 'leader':
-                print(str(self.matchIndex) + ' leader commit: ' + str(self.lastApplied) + \
-                      ' leader len: ' + str(len(self.log)) + ' pending: ' + str(len(self.pending)), flush=True)
-                if len(self.pending) > 0:
-                    print('number pending ' + str(len(self.pending)))
-                if currentTime - self.last_heartbeat > HEARTBEAT:
-                    self.last_heartbeat = currentTime
-                    #self.send_append(None, '', self.prevIndex(), self.prevTerm(), [])
-                    self.update_followers()
-
-                if len(self.events) > 0 and time.time() - self.events[0][0] > MESSAGETIMEOUT:
-                    print("put timed out, see if I'm still the leader")
-                    self.last_heartbeat = time.time()
-                    self.timeout = TIMEOUT * (random.random() + 1)
-                    self.elect()
+                self.leader_heartbeat()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='run a key-value store')
