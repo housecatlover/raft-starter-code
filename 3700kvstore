@@ -4,8 +4,8 @@ import argparse, socket, time, json, select, struct, sys, math, os, random, secr
 
 # secrets.token_hex(16)
 BROADCAST = "FFFF"
-TIMEOUT = .2
-HEARTBEAT = TIMEOUT / 2  # how often heartbeats should be sent
+TIMEOUT = .15
+HEARTBEAT = TIMEOUT * .5  # how often heartbeats should be sent
 LEADER_TIMEOUT = TIMEOUT * 2
 
 TERM = 0
@@ -37,7 +37,7 @@ class Replica:
         self.commitIndex = -1  # the last know index to be committed to the leader's log (got consensus)
         self.matchIndex = {}  # id: max known index
 
-        self.redirect_queue = []  # all of the messages this replica has to redirect
+        self.redirect_queue = []  # all the messages this replica has to redirect
         self.redirect_timeout = time.time()  # the time of the last redirection batch
 
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -46,15 +46,12 @@ class Replica:
         # ("Replica %s starting up" % self.id, flush=True)
         hello = {"src": self.id, "dst": BROADCAST, "leader": BROADCAST, "type": "hello"}
         self.send(hello)
-        # print("Sent hello message: %s" % hello, flush=True)
 
+    # send the given message
     def send(self, message):
-        # print('sending ' + str(message))
-        # if message['type'] == 'AppendEntries' and message['dst'] == BROADCAST:
-        #     self.last_heartbeat = time.time()
-        # print("Sending message message '%s'" % (message,), flush=True)
         self.socket.sendto(json.dumps(message).encode('utf-8'), ('localhost', self.port))
 
+    # send a message structured with the provided arguments
     def send_args(self, dst, type, MID, term, value):
         message = {"src": self.id, "dst": dst, "leader": self.leader,
                    "type": type}
@@ -66,6 +63,7 @@ class Replica:
             message['value'] = value
         self.send(message)
 
+    # send an append entries message with all the necessary args + provided
     def send_append(self, dst, MID, prevLogIndex, prevLogTerm, entries):
         message = {"src": self.id, "dst": BROADCAST if dst is None else dst, "leader": self.leader,
                    "type": 'AppendEntries', 'term': self.currentTerm,
@@ -75,17 +73,19 @@ class Replica:
             message['MID'] = MID
         self.send(message)
 
+    # send the client a fail response to the given message
     def fail(self, msg):
-        #print('failing ' + msg['MID'], flush=True)
         self.send_args(msg['src'], 'fail', msg['MID'], None, None)
 
+    # send the client an ok response to the given message
     def ok(self, msg, value):
-        #print('oking ' + str(msg), flush=True)
         self.send_args(msg['src'], 'ok', msg['MID'], None, value)
 
+    # send a redirect response to the given message
     def send_redirect(self, msg):
         self.send_args(msg['src'], 'redirect', msg['MID'], None, None)
 
+    # considers if the replica needs to redirect the message, and does so if necessary
     def redirect(self, msg):
         if self.leader is None:
             self.fail(msg)
@@ -94,41 +94,45 @@ class Replica:
             return True
         return False
 
+    # handles get requests for the leader
     def get_request(self, msg):
         contents = self.data.get(msg['key'])
         value = '' if contents is None else contents
         self.ok(msg, value)
 
+    # handles put requests for the leader
     def put_request(self, msg):
-        # print('got put request ' + msg['MID'], flush=True)
-        if msg['MID'] in self.pending:
-            #print('duplicate request', flush=True)
+        if msg['MID'] in self.pending:  # recieved duplicate
             return
         if self.status == 'leader':  # no duplicate
             entry = (self.currentTerm, (msg['key'], msg['value']))
-            # self.send_append(None, msg['MID'], self.prevIndex(), self.prevTerm(), [entry])
             self.log.append(entry)
+            # self.update_followers()
             self.pending[msg['MID']] = {'msg': msg, 'index': self.prevIndex()}
 
+    # apply a put message to the data & ok the message, done post concensus
     def apply_put(self, msg):
         self.apply_log()
         self.commitIndex = self.lastApplied  # only called for the leader
         self.ok(msg, None)
 
+    # apply the next log entry to the data
     def apply_log(self):
-        self.lastApplied += 1
-        key, value = self.log[self.lastApplied][ENTRY]
-        # print('applying ' + key + value, flush=True)
-        self.data[key] = value
+        if self.lastApplied + 1 < len(self.log):
+            self.lastApplied += 1
+            key, value = self.log[self.lastApplied][ENTRY]
+            self.data[key] = value
 
+    # returns the previous index of the log
     def prevIndex(self):
         return len(self.log) - 1
 
+    # returns the previous term
     def prevTerm(self):
         return self.log[-1][TERM] if len(self.log) > 0 else 0
 
+    # call for an election becoming the candidate
     def elect(self):
-        #print('vote for me')
         self.currentTerm += 1
         self.status = 'candidate'
         self.leader = BROADCAST
@@ -137,6 +141,7 @@ class Replica:
         self.send({'src': self.id, 'dst': BROADCAST, 'leader': self.leader, 'type': 'candidacy',
                    'lastTerm': self.prevTerm(), 'lastIndex': self.prevIndex(), 'term': self.currentTerm})
 
+    # decide whether to vote for a candidate
     def vote(self, msg):
         if msg['term'] < self.currentTerm:
             return  # False
@@ -147,9 +152,8 @@ class Replica:
                 self.send_args(msg['src'], 'vote', None, self.currentTerm, None)
                 self.last_heartbeat = time.time()
                 return
-        #print('voting against' + msg['src'])
 
-
+    # consider an append request and ask for an induction if out of date
     def consider_append(self, msg):
         if len(msg['entries']) == 0:  # if it is a heartbeat
             if msg['leaderCommit'] >= len(self.log):
@@ -157,7 +161,6 @@ class Replica:
             return
         prev_i = msg['prevLogIndex']
         if len(self.log) > prev_i + 1 and self.log[prev_i + 1:] == msg['entries']:
-            # print('was skipping the application of append since it was already there')
             self.send_args(self.leader, 'agree', msg.get('MID'), self.currentTerm, self.prevIndex())
             return  # already applied, probably duplicate message
         if prev_i == -1 \
@@ -174,22 +177,25 @@ class Replica:
         else:
             self.send_args(self.leader, 'induce_me', msg.get('MID'), None, self.commitIndex)
 
+    # induces a follower that sent the given message, using the known matchIndex if possible
     def induce(self, msg):
         index = self.matchIndex.get(msg['src'])
         if index is None:
             index = msg['value']  # if it's an induce me request
         self.induce_from(msg.get('MID'), index, msg['src'])
 
+    # Sends a round of appendEntry messages to all followers based on most recent matchIndex
     def update_followers(self):
+        self.last_heartbeat = time.time()
         for follower in self.others:
             index = self.matchIndex.get(follower)  # send append from the earliest known index
             if index is None:
                 index = max(len(self.log) - 50, 0)
             self.induce_from(None, index, follower)
 
+    # Sends one or more appendEntry messages updating a follower starting from a given log index
     def induce_from(self, MID, index, dst):
-        if index >= len(self.log):
-            #print('tried to induce starting after the leaders log ' + str(index) + ' > ' + str(len(self.log)))
+        if index + 1 >= len(self.log):
             return
         if len(self.log) - index < 51:
             self.send_append(dst, MID, index, self.log[index][TERM], self.log[index + 1:])
@@ -197,37 +203,25 @@ class Replica:
             self.send_append(dst, MID, index, self.log[index][TERM], self.log[index + 1:index + 51])
             self.induce_from(MID, index + 50, dst)
 
-
-    def deprecated_induce(self, msg):
-        log_len = len(msg['value'])
-        for index in range(min(log_len, len(self.log)) - 1, -1, -1):
-            if msg['value'][index] == self.log[index]:  # if the value is the same at this index
-                if len(self.log) <= index + 1:  # then, if the leader's log is not longer
-                    return  # nothing to append: exit
-                self.send_append(msg['src'], msg['MID'], index, self.log[index][TERM],
-                                 self.log[index + 1:])  # if the leader's log is longer, fill in the follower's log
-                return  # we found the common point of agreement and replaced the follower's log accordingly so exit
-        # otherwise, no point of agreement, replace follower's log
-        self.send_append(msg['src'], msg['MID'], -1, 0, self.log)
-
+    # deals with a log of pending puts via redirection after a leader loses their status
     def resolve_log(self):
-        remove = set()
         for MID in self.pending.keys():
             msg = self.pending[MID]['msg']
             self.redirect(msg)
-            # self.fail(msg)
         self.pending = {}
 
-    def highest_concensus(self):
+    # determines the highest index that a majority of replicas have commited to their log
+    def highest_consensus(self):
         indices = []
         for index in self.matchIndex.values():
             indices.append(index)
-        indices.append(len(self.log) + 1)
+        indices.append(len(self.log) - 1)
         sorted(indices)
         if len(indices) > 2:
             return indices[-3]
         return self.commitIndex
 
+    # handle messages received from the leader
     def leader_recv(self, msg):
         if msg['type'] == 'agree':
 
@@ -237,12 +231,14 @@ class Replica:
                 current = -1
             self.matchIndex[msg['src']] = max(msg['value'], current)
 
-            highest_consensus = self.highest_concensus()
+            highest_consensus = self.highest_consensus()
 
+            # apply all log entries that have reached consensus
             while self.lastApplied < highest_consensus:
                 self.apply_log()
             self.commitIndex = self.lastApplied
 
+            # ok all pending messages that have received consensus
             done = set()
             for MID in self.pending.keys():
                 entry = self.pending[MID]
@@ -257,12 +253,11 @@ class Replica:
         elif msg['type'] == 'induce_me':
             self.induce(msg)
 
+    # handle when a candidate receives a message
     def candidate_recv(self, msg):
         if msg['type'] == 'vote' and msg['term'] == self.currentTerm:
             self.votes.add(msg['src'])
-            #print('votes: ' + str(self.num_votes) + ' term: ' + str(self.currentTerm))
             if len(self.votes) >= len(self.others) / 2:
-              #(str(len(self.num_votes)) + '>=' + str(len(self.others) / 2))
                 self.status = 'leader'
                 self.leader = self.id
                 self.last_consensus = time.time()
@@ -274,40 +269,31 @@ class Replica:
                 self.leader = msg['leader']
                 self.resolve_log()
 
+    # handle messages received by a follower
     def follower_recv(self, msg):
         if msg['type'] == 'candidacy':
             self.vote(msg)
-        elif msg['type'] == 'consider':
-            if msg['value']['type'] == 'get':
-                self.get_request(msg['value'])  # will have a MID and a key to be gotten
-            else:
-                self.put_request(msg['value'])
         elif msg['type'] == 'AppendEntries':
             if msg['leader'] != self.leader and msg['term'] >= self.currentTerm:
                 self.leader = msg['leader']
                 self.resolve_log()
             self.consider_append(msg)
 
+    # trigger any interval based events for the leader
     def leader_heartbeat(self):
-        #print(str(self.matchIndex) + ' leader commit: ' + str(self.lastApplied) + \
-              #' leader len: ' + str(len(self.log)) + ' pending: ' + str(len(self.pending)), flush=True)
-        # if len(self.pending) > 0:
-            #print('number pending ' + str(len(self.pending)))
         if time.time() - self.last_heartbeat > HEARTBEAT:
-            self.last_heartbeat = time.time()
-            #self.send_append(None, '', self.prevIndex(), self.prevTerm(), [])
             self.update_followers()
 
+        # consensus has timed out, call a new election to stop
         if time.time() - self.last_consensus > LEADER_TIMEOUT:
-            #print("consensus timed out, see if I'm still the leader")
             self.last_heartbeat = time.time()
             self.timeout = TIMEOUT * (random.random() + 1)
             self.elect()
 
+    # keeps track of when a replica that is not the leader should call for an election
     def election_heartbeat(self):
         if self.status != 'leader' and \
                 time.time() - self.last_heartbeat > self.timeout:
-            #print('I SHOULD TIMEOUT')
             self.last_heartbeat = time.time()
             self.timeout = TIMEOUT * (random.random() + 1)  # +1 for fewer leader tieouts 1-2 x timeout
             self.elect()
@@ -320,7 +306,6 @@ class Replica:
             if len(ready) == 1:
                 data, addr = self.socket.recvfrom(65535)
                 msg = json.loads(data.decode('utf-8'))
-                #print("Received message '%s'" % (msg,), flush=True)
 
                 term = msg.get('term')
                 if term is not None and term > self.currentTerm:
@@ -332,16 +317,13 @@ class Replica:
                     self.last_heartbeat = time.time()
 
                 if msg['dst'] != self.id and msg['dst'] != BROADCAST:
-                    #print('Sent to the wrong host', flush=True)
                     continue
 
                 if msg['type'] == 'get':
-                    # print('received get', flush=True)
                     if self.redirect(msg):
                         continue
                     self.get_request(msg)  # will have a MID and a key to be gotten
                 elif msg['type'] == 'put':
-                    # print('received put', flush=True)
                     if self.redirect(msg):
                         continue
                     self.put_request(msg)
