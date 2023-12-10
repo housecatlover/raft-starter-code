@@ -134,7 +134,6 @@ class Replica:
     def elect(self):
         self.currentTerm += 1
         self.status = 'candidate'
-        self.leader = BROADCAST
         self.votedFor = self.id
         self.votes = set()
         self.send({'src': self.id, 'dst': BROADCAST, 'leader': self.leader, 'type': 'candidacy',
