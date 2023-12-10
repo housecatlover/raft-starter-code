@@ -350,7 +350,10 @@ class Replica:
             current_time = time.time()
             if current_time - self.redirect_timeout > TIMEOUT:  # minimize partition noise
                 while len(self.redirect_queue) != 0:
-                    self.send_redirect(self.redirect_queue.pop())
+                    if self.status == 'leader':
+                        self.apply_put(self.redirect_queue.pop())
+                    else:
+                        self.send_redirect(self.redirect_queue.pop())
                 self.redirect_timeout = current_time
 
             if self.status == 'leader':
