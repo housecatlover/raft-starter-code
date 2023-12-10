@@ -265,6 +265,8 @@ class Replica:
                 self.leader = self.id
                 self.last_consensus = time.time()
                 self.apply_matched()
+                self.update_followers()  # alert others that you are the leader
+                self.last_heartbeat = time.time()
                 # the log is retained as it is still the leader
                 # other leader things
         elif msg['type'] == 'AppendEntries':
