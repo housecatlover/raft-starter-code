@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 
-import argparse, socket, time, json, select, struct, sys, math, os, random, secrets
+import argparse, socket, time, json, select, random
 
-# secrets.token_hex(16)
 BROADCAST = "FFFF"
 TIMEOUT = .15
 HEARTBEAT = TIMEOUT * .5  # how often heartbeats should be sent
@@ -78,7 +77,7 @@ class Replica:
         self.send_args(msg['src'], 'fail', msg['MID'], None, None)
 
     # send the client an ok response to the given message
-    def ok(self, msg, value):
+    def ok(self, msg, value): # TODO try sending the key along with the value so we can see it in the error messages
         self.send_args(msg['src'], 'ok', msg['MID'], None, value)
 
     # send a redirect response to the given message
@@ -102,7 +101,7 @@ class Replica:
 
     # handles put requests for the leader
     def put_request(self, msg):
-        if msg['MID'] in self.pending:  # recieved duplicate
+        if msg['MID'] in self.pending:  # received duplicate
             return
         if self.status == 'leader':  # no duplicate
             entry = (self.currentTerm, (msg['key'], msg['value']))
@@ -110,7 +109,7 @@ class Replica:
             # self.update_followers()
             self.pending[msg['MID']] = {'msg': msg, 'index': self.prevIndex()}
 
-    # apply a put message to the data & ok the message, done post concensus
+    # apply a put message to the data & ok the message, done post consensus
     def apply_put(self, msg):
         self.apply_log()
         self.commitIndex = self.lastApplied  # only called for the leader
@@ -149,7 +148,7 @@ class Replica:
             if msg['lastTerm'] > self.prevTerm() or \
                     (msg['lastTerm'] == self.prevTerm() and msg['lastIndex'] >= self.prevIndex()):
                 self.votedFor = msg['src']
-                self.send_args(msg['src'], 'vote', None, self.currentTerm, None)
+                self.send_args(msg['src'], 'vote', None, self.currentTerm, self.prevIndex())
                 self.last_heartbeat = time.time()
                 return
 
@@ -221,35 +220,34 @@ class Replica:
             return indices[-3]
         return self.commitIndex
 
+    def apply_matched(self):
+        highest_consensus = self.highest_consensus()
+
+        # apply all log entries that have reached consensus
+        while self.lastApplied < highest_consensus:
+            self.apply_log()
+        self.commitIndex = self.lastApplied
+        # ok all pending messages that have received consensus
+        done = set()
+        for MID in self.pending.keys():
+            entry = self.pending[MID]
+            if entry['index'] <= self.commitIndex:
+                self.ok(entry['msg'], None)
+                done.add(MID)
+        for MID in done:
+            self.pending.pop(MID)
+        if len(done) > 0:
+            self.last_consensus = time.time()
+
     # handle messages received from the leader
     def leader_recv(self, msg):
         if msg['type'] == 'agree':
-
             # update matchIndex
             current = self.matchIndex.get(msg['src'])
             if current is None:
                 current = -1
             self.matchIndex[msg['src']] = max(msg['value'], current)
-
-            highest_consensus = self.highest_consensus()
-
-            # apply all log entries that have reached consensus
-            while self.lastApplied < highest_consensus:
-                self.apply_log()
-            self.commitIndex = self.lastApplied
-
-            # ok all pending messages that have received consensus
-            done = set()
-            for MID in self.pending.keys():
-                entry = self.pending[MID]
-                if entry['index'] <= self.commitIndex:
-                    self.ok(entry['msg'], None)
-                    done.add(MID)
-            for MID in done:
-                self.pending.pop(MID)
-            if len(done) > 0:
-                self.last_consensus = time.time()
-
+            self.apply_matched()
         elif msg['type'] == 'induce_me':
             self.induce(msg)
 
@@ -257,10 +255,12 @@ class Replica:
     def candidate_recv(self, msg):
         if msg['type'] == 'vote' and msg['term'] == self.currentTerm:
             self.votes.add(msg['src'])
+            self.matchIndex[msg['src']] = msg['value']
             if len(self.votes) >= len(self.others) / 2:
                 self.status = 'leader'
                 self.leader = self.id
                 self.last_consensus = time.time()
+                self.apply_matched()
                 # the log is retained as it is still the leader
                 # other leader things
         elif msg['type'] == 'AppendEntries':
