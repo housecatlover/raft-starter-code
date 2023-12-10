@@ -195,6 +195,7 @@ class Replica:
     # Sends one or more appendEntry messages updating a follower starting from a given log index
     def induce_from(self, MID, index, dst):
         if index + 1 >= len(self.log):
+            self.send_append(dst, MID, index, self.prevIndex(), [])  #  still need to send heartbeat
             return
         if len(self.log) - index < 51:
             self.send_append(dst, MID, index, self.log[index][TERM], self.log[index + 1:])
