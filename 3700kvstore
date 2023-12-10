@@ -27,7 +27,7 @@ class Replica:
         self.status = 'follower'
 
         self.votedFor = None
-        self.num_votes = set()  # todo refactor to votes
+        self.votes = set()
 
         self.log = []  # pair <term, <key, value>> as defined in the constants
         self.data = {}  # the key, value dict that is the store
@@ -133,7 +133,7 @@ class Replica:
         self.status = 'candidate'
         self.leader = BROADCAST
         self.votedFor = self.id
-        self.num_votes = set()
+        self.votes = set()
         self.send({'src': self.id, 'dst': BROADCAST, 'leader': self.leader, 'type': 'candidacy',
                    'lastTerm': self.prevTerm(), 'lastIndex': self.prevIndex(), 'term': self.currentTerm})
 
@@ -259,9 +259,9 @@ class Replica:
 
     def candidate_recv(self, msg):
         if msg['type'] == 'vote' and msg['term'] == self.currentTerm:
-            self.num_votes.add(msg['src'])
+            self.votes.add(msg['src'])
             #print('votes: ' + str(self.num_votes) + ' term: ' + str(self.currentTerm))
-            if len(self.num_votes) >= len(self.others) / 2:
+            if len(self.votes) >= len(self.others) / 2:
               #(str(len(self.num_votes)) + '>=' + str(len(self.others) / 2))
                 self.status = 'leader'
                 self.leader = self.id
