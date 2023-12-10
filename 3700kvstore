@@ -80,7 +80,7 @@ class Replica:
         self.send_args(msg['src'], 'fail', msg['MID'], None, None)
 
     def ok(self, msg, value):
-        print('oking ' + str(msg), flush=True)
+        #print('oking ' + str(msg), flush=True)
         self.send_args(msg['src'], 'ok', msg['MID'], None, value)
 
     def send_redirect(self, msg):
@@ -102,7 +102,7 @@ class Replica:
     def put_request(self, msg):
         # print('got put request ' + msg['MID'], flush=True)
         if msg['MID'] in self.pending:
-            print('duplicate request', flush=True)
+            #print('duplicate request', flush=True)
             return
         if self.status == 'leader':  # no duplicate
             entry = (self.currentTerm, (msg['key'], msg['value']))
@@ -128,7 +128,7 @@ class Replica:
         return self.log[-1][TERM] if len(self.log) > 0 else 0
 
     def elect(self):
-        print('vote for me')
+        #print('vote for me')
         self.currentTerm += 1
         self.status = 'candidate'
         self.leader = BROADCAST
@@ -147,7 +147,7 @@ class Replica:
                 self.send_args(msg['src'], 'vote', None, self.currentTerm, None)
                 self.last_heartbeat = time.time()
                 return
-        print('voting against' + msg['src'])
+        #print('voting against' + msg['src'])
 
 
     def consider_append(self, msg):
@@ -189,7 +189,7 @@ class Replica:
 
     def induce_from(self, MID, index, dst):
         if index >= len(self.log):
-            print('tried to induce starting after the leaders log ' + str(index) + ' > ' + str(len(self.log)))
+            #print('tried to induce starting after the leaders log ' + str(index) + ' > ' + str(len(self.log)))
             return
         if len(self.log) - index < 51:
             self.send_append(dst, MID, index, self.log[index][TERM], self.log[index + 1:])
@@ -260,9 +260,9 @@ class Replica:
     def candidate_recv(self, msg):
         if msg['type'] == 'vote' and msg['term'] == self.currentTerm:
             self.num_votes.add(msg['src'])
-            print('votes: ' + str(self.num_votes) + ' term: ' + str(self.currentTerm))
+            #print('votes: ' + str(self.num_votes) + ' term: ' + str(self.currentTerm))
             if len(self.num_votes) >= len(self.others) / 2:
-                print(str(len(self.num_votes)) + '>=' + str(len(self.others) / 2))
+              #(str(len(self.num_votes)) + '>=' + str(len(self.others) / 2))
                 self.status = 'leader'
                 self.leader = self.id
                 self.last_consensus = time.time()
@@ -289,17 +289,17 @@ class Replica:
             self.consider_append(msg)
 
     def leader_heartbeat(self):
-        print(str(self.matchIndex) + ' leader commit: ' + str(self.lastApplied) + \
-              ' leader len: ' + str(len(self.log)) + ' pending: ' + str(len(self.pending)), flush=True)
-        if len(self.pending) > 0:
-            print('number pending ' + str(len(self.pending)))
+        #print(str(self.matchIndex) + ' leader commit: ' + str(self.lastApplied) + \
+              #' leader len: ' + str(len(self.log)) + ' pending: ' + str(len(self.pending)), flush=True)
+        # if len(self.pending) > 0:
+            #print('number pending ' + str(len(self.pending)))
         if time.time() - self.last_heartbeat > HEARTBEAT:
             self.last_heartbeat = time.time()
             #self.send_append(None, '', self.prevIndex(), self.prevTerm(), [])
             self.update_followers()
 
         if time.time() - self.last_consensus > LEADER_TIMEOUT:
-            print("consensus timed out, see if I'm still the leader")
+            #print("consensus timed out, see if I'm still the leader")
             self.last_heartbeat = time.time()
             self.timeout = TIMEOUT * (random.random() + 1)
             self.elect()
@@ -307,7 +307,7 @@ class Replica:
     def election_heartbeat(self):
         if self.status != 'leader' and \
                 time.time() - self.last_heartbeat > self.timeout:
-            print('I SHOULD TIMEOUT')
+            #print('I SHOULD TIMEOUT')
             self.last_heartbeat = time.time()
             self.timeout = TIMEOUT * (random.random() + 1)  # +1 for fewer leader tieouts 1-2 x timeout
             self.elect()
@@ -332,7 +332,7 @@ class Replica:
                     self.last_heartbeat = time.time()
 
                 if msg['dst'] != self.id and msg['dst'] != BROADCAST:
-                    print('Sent to the wrong host', flush=True)
+                    #print('Sent to the wrong host', flush=True)
                     continue
 
                 if msg['type'] == 'get':
