@@ -77,7 +77,7 @@ class Replica:
         self.send_args(msg['src'], 'fail', msg['MID'], None, None)
 
     # send the client an ok response to the given message
-    def ok(self, msg, value): # TODO try sending the key along with the value so we can see it in the error messages
+    def ok(self, msg, value):
         self.send_args(msg['src'], 'ok', msg['MID'], None, value)
 
     # send a redirect response to the given message
@@ -89,7 +89,8 @@ class Replica:
         if self.leader is None:
             self.fail(msg)
         if self.status != 'leader':
-            self.redirect_queue.append(msg)
+            self.send_redirect(msg)
+            # self.redirect_queue.append(msg)
             return True
         return False
 
