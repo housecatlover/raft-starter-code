@@ -218,14 +218,14 @@ class Replica:
         indices.append(len(self.log) - 1)
         sorted(indices)
         if len(indices) > 2:
-            return indices[-3]
+            return min(indices[-3], len(self.log) - 1)
         return self.commitIndex
 
     def apply_matched(self):
         highest_consensus = self.highest_consensus()
 
         # apply all log entries that have reached consensus
-        if self.log[highest_consensus][TERM] == self.currentTerm:
+        if highest_consensus != -1 and self.log[highest_consensus][TERM] == self.currentTerm:
             while self.lastApplied < highest_consensus:
                 self.apply_log()
             self.commitIndex = self.lastApplied
