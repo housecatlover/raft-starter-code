@@ -225,20 +225,21 @@ class Replica:
         highest_consensus = self.highest_consensus()
 
         # apply all log entries that have reached consensus
-        while self.lastApplied < highest_consensus:
-            self.apply_log()
-        self.commitIndex = self.lastApplied
-        # ok all pending messages that have received consensus
-        done = set()
-        for MID in self.pending.keys():
-            entry = self.pending[MID]
-            if entry['index'] <= self.commitIndex:
-                self.ok(entry['msg'], None)
-                done.add(MID)
-        for MID in done:
-            self.pending.pop(MID)
-        if len(done) > 0:
-            self.last_consensus = time.time()
+        if self.log[highest_consensus][TERM] == self.currentTerm:
+            while self.lastApplied < highest_consensus:
+                self.apply_log()
+            self.commitIndex = self.lastApplied
+            # ok all pending messages that have received consensus
+            done = set()
+            for MID in self.pending.keys():
+                entry = self.pending[MID]
+                if entry['index'] <= self.commitIndex:
+                    self.ok(entry['msg'], None)
+                    done.add(MID)
+            for MID in done:
+                self.pending.pop(MID)
+            if len(done) > 0:
+                self.last_consensus = time.time()
 
     # handle messages received from the leader
     def leader_recv(self, msg):
@@ -297,6 +298,7 @@ class Replica:
             self.timeout = TIMEOUT * (random.random() + 1)
             self.elect()
 
+
     # keeps track of when a replica that is not the leader should call for an election
     def election_heartbeat(self):
         if self.status != 'leader' and \
@@ -319,6 +321,9 @@ class Replica:
                     self.currentTerm = term
                     self.votedFor = None
                     self.status = 'follower'
+
+                if term is not None and term < self.currentTerm:
+                    continue
 
                 if msg['src'] == self.leader:
                     self.last_heartbeat = time.time()
